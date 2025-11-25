@@ -1,0 +1,13 @@
+fastapi
+uvicorn[standard]
+sqlalchemy
+psycopg2-binary
+pydantic
+python-dotenv
+requests
+apscheduler
+torch
+numpy
+pandas
+scikit-learn
+websockets
