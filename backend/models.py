@@ -33,6 +33,18 @@ class Player(Base):
     height = Column(String)
     nationality = Column(String)
     team = relationship("Team", back_populates="players")
+    
+    # Enhanced Data (Optional)
+    photo_url = Column(String, nullable=True)
+    date_of_birth = Column(DateTime, nullable=True)
+    market_value = Column(String, nullable=True)
+    jersey_number = Column(Integer, nullable=True)
+    
+    # Stats (from API-Football)
+    goals_season = Column(Integer, nullable=True)
+    assists_season = Column(Integer, nullable=True)
+    rating_season = Column(Float, nullable=True)
+    minutes_played = Column(Integer, nullable=True)
 
 class Match(Base):
     __tablename__ = "matches"

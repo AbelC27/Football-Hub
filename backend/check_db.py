@@ -1,25 +1,23 @@
-try:
-    from backend.database import SessionLocal
-    from backend.models import League, Team, Match
-except ImportError:
-    from database import SessionLocal
-    from models import League, Team, Match
+from database import SessionLocal
+from models import League, Team, Match, Standing, Player
 
 db = SessionLocal()
-
-print("=== LEAGUES ===")
 leagues = db.query(League).all()
-for league in leagues:
-    print(f"ID: {league.id}, Name: {league.name}, Country: {league.country}")
+print('Leagues:')
+for l in leagues:
+    team_count = db.query(Team).filter(Team.league_id == l.id).count()
+    standing_count = db.query(Standing).filter(Standing.league_id == l.id).count()
+    print(f'  - {l.name} (ID: {l.id}) - Teams: {team_count}, Standings: {standing_count}')
 
-print("\n=== TEAMS ===")
-teams = db.query(Team).all()
-for team in teams:
-    print(f"ID: {team.id}, Name: {team.name}, League ID: {team.league_id}")
+total_leagues = len(leagues)
+total_teams = db.query(Team).count()
+total_players = db.query(Player).count()
+total_matches = db.query(Match).count()
 
-print("\n=== MATCHES ===")
-matches = db.query(Match).limit(10).all()
-for match in matches:
-    print(f"ID: {match.id}, Home: {match.home_team_id}, Away: {match.away_team_id}, Status: {match.status}")
+print(f'\nTotal Stats:')
+print(f'  Leagues: {total_leagues}')
+print(f'  Teams: {total_teams}')
+print(f'  Players: {total_players}')
+print(f'  Matches: {total_matches}')
 
 db.close()

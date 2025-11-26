@@ -10,6 +10,9 @@ except ImportError:
     from models import Match, League, Team, Prediction, Player, MatchEvent, MatchStatistics
     from schemas import Match as MatchSchema, Prediction as PredictionSchema
 import datetime
+from services.data_aggregator import data_aggregator
+from services.thesportsdb_service import thesportsdb
+from services.api_football_service import api_football
 
 router = APIRouter(prefix="/api/v1", tags=["api"])
 
@@ -304,6 +307,47 @@ def get_player_details(player_id: int, db: Session = Depends(get_db)):
         } if league else None
     }
 
+@router.get("/players/{player_id}/enhanced")
+def get_player_enhanced(player_id: int, db: Session = Depends(get_db)):
+    """Get player details enriched with external API data"""
+    player = db.query(Player).filter(Player.id == player_id).first()
+    if not player:
+        raise HTTPException(status_code=404, detail="Player not found")
+    
+    # Base data from DB
+    player_dict = {
+        "id": player.id,
+        "name": player.name,
+        "position": player.position,
+        "nationality": player.nationality,
+        "height": player.height,
+        "team_id": player.team_id,
+        # Include new DB fields if they exist (they might be null)
+        "photo_url": player.photo_url,
+        "date_of_birth": player.date_of_birth,
+        "stats": {
+            "goals": player.goals_season,
+            "assists": player.assists_season,
+            "rating": player.rating_season,
+            "minutes": player.minutes_played
+        }
+    }
+    
+    # Enrich with external data
+    # This will fetch from APIs if data is missing or if we want fresh data
+    # For now, we just call the aggregator which handles the logic
+    enriched = data_aggregator.enrich_player_data(player_dict)
+    
+    # Get team info
+    team = db.query(Team).filter(Team.id == player.team_id).first()
+    enriched['team'] = {
+        "id": team.id,
+        "name": team.name,
+        "logo_url": team.logo_url
+    } if team else None
+    
+    return enriched
+
 @router.get("/teams/{team_id}/statistics")
 def get_team_statistics(team_id: int, db: Session = Depends(get_db)):
     """Get comprehensive team statistics"""
@@ -430,13 +474,21 @@ def get_head_to_head(team1_id: int, team2_id: int, db: Session = Depends(get_db)
                 draws += 1
                 result = 'draw'
             
+            winner_id = None
+            if match.home_score > match.away_score:
+                winner_id = match.home_team_id
+            elif match.away_score > match.home_score:
+                winner_id = match.away_team_id
+
             match_history.append({
+                "id": match.id,
                 "date": match.start_time,
                 "home_team": team1.name if is_team1_home else team2.name,
                 "away_team": team2.name if is_team1_home else team1.name,
                 "home_score": match.home_score,
                 "away_score": match.away_score,
-                "result": result
+                "result": result,
+                "winner_id": winner_id
             })
     
     total_matches = team1_wins + team2_wins + draws
@@ -470,34 +522,63 @@ def get_player_comparison(player1_id: int, player2_id: int, db: Session = Depend
     if not player1 or not player2:
         raise HTTPException(status_code=404, detail="Player not found")
     
+    # Prepare base data for enrichment
+    player1_dict = {
+        "id": player1.id,
+        "name": player1.name,
+        "position": player1.position,
+        "nationality": player1.nationality,
+        "height": player1.height,
+        "team_id": player1.team_id,
+        "photo_url": player1.photo_url,
+        "date_of_birth": player1.date_of_birth,
+        "stats": {
+            "goals": player1.goals_season,
+            "assists": player1.assists_season,
+            "rating": player1.rating_season,
+            "minutes": player1.minutes_played
+        }
+    }
+
+    player2_dict = {
+        "id": player2.id,
+        "name": player2.name,
+        "position": player2.position,
+        "nationality": player2.nationality,
+        "height": player2.height,
+        "team_id": player2.team_id,
+        "photo_url": player2.photo_url,
+        "date_of_birth": player2.date_of_birth,
+        "stats": {
+            "goals": player2.goals_season,
+            "assists": player2.assists_season,
+            "rating": player2.rating_season,
+            "minutes": player2.minutes_played
+        }
+    }
+
+    # Enrich with external data
+    enriched_p1 = data_aggregator.enrich_player_data(player1_dict)
+    enriched_p2 = data_aggregator.enrich_player_data(player2_dict)
+    
     # Get team info for both players
     team1 = db.query(Team).filter(Team.id == player1.team_id).first()
     team2 = db.query(Team).filter(Team.id == player2.team_id).first()
     
+    enriched_p1['team'] = {
+        "id": team1.id,
+        "name": team1.name,
+        "logo_url": team1.logo_url
+    } if team1 else None
+
+    enriched_p2['team'] = {
+        "id": team2.id,
+        "name": team2.name,
+        "logo_url": team2.logo_url
+    } if team2 else None
+    
     return {
-        "player1": {
-            "id": player1.id,
-            "name": player1.name,
-            "position": player1.position,
-            "nationality": player1.nationality,
-            "height": player1.height,
-            "team": {
-                "id": team1.id,
-                "name": team1.name,
-                "logo_url": team1.logo_url
-            } if team1 else None
-        },
-        "player2": {
-            "id": player2.id,
-            "name": player2.name,
-            "position": player2.position,
-            "nationality": player2.nationality,
-            "height": player2.height,
-            "team": {
-                "id": team2.id,
-                "name": team2.name,
-                "logo_url": team2.logo_url
-            } if team2 else None
-        },
-        "note": "Detailed performance stats require additional data integration"
+        "player1": enriched_p1,
+        "player2": enriched_p2,
+        "note": "Detailed performance stats provided by API-Football and TheSportsDB"
     }

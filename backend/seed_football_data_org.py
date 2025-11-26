@@ -239,11 +239,13 @@ if __name__ == "__main__":
     try:
         leagues_to_seed = [
             ('PL', 'Premier League'),
-            ('CL', 'Champions League'),
-            ('EL', 'Europa League'), # Check code
+            ('CL', 'UEFA Champions League'),
+            ('EL', 'UEFA Europa League'),
+            ('CLI', 'UEFA Conference League'),
             ('SA', 'Serie A'),
             ('PD', 'La Liga'),
-            ('BL1', 'Bundesliga')
+            ('BL1', 'Bundesliga'),
+            ('FL1', 'Ligue 1')
         ]
         
         total_stats = {'teams': 0, 'matches': 0, 'standings': 0, 'players': 0}
