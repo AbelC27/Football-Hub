@@ -1,20 +1,34 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 from sqlalchemy import or_
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 import re
 try:
     from backend.database import get_db
     from backend.models import Match, League, Team, Prediction, Player, MatchEvent, MatchStatistics
-    from backend.schemas import Match as MatchSchema, Prediction as PredictionSchema, MatchExperience as MatchExperienceSchema
+    from backend.schemas import (
+        Match as MatchSchema,
+        Prediction as PredictionSchema,
+        MatchExperience as MatchExperienceSchema,
+        NextEventPredictionResponse as NextEventPredictionResponseSchema,
+    )
 except ImportError:
     from database import get_db
     from models import Match, League, Team, Prediction, Player, MatchEvent, MatchStatistics
-    from schemas import Match as MatchSchema, Prediction as PredictionSchema, MatchExperience as MatchExperienceSchema
+    from schemas import (
+        Match as MatchSchema,
+        Prediction as PredictionSchema,
+        MatchExperience as MatchExperienceSchema,
+        NextEventPredictionResponse as NextEventPredictionResponseSchema,
+    )
 import datetime
 from services.data_aggregator import data_aggregator
 from services.thesportsdb_service import thesportsdb
 from services.api_football_service import api_football
+try:
+    from backend.ai.next_event_ranker import next_event_inference_service
+except ImportError:
+    from ai.next_event_ranker import next_event_inference_service
 
 router = APIRouter(prefix="/api/v1", tags=["api"])
 
@@ -43,6 +57,7 @@ SUPPORTED_LEAGUE_NAME_TOKENS = (
 )
 
 FINISHED_MATCH_STATUSES = {"FT", "AET", "PEN"}
+IN_PLAY_MATCH_STATUSES = {"LIVE", "HT", "1H", "2H", "ET"}
 ASSIST_PATTERN = re.compile(r"assist(?:ed)?\s*[:\-]?\s*([A-Za-z0-9 .'-]+)", re.IGNORECASE)
 
 
@@ -1263,6 +1278,55 @@ def get_match_prediction(match_id: int, db: Session = Depends(get_db)):
     if not prediction:
         raise HTTPException(status_code=404, detail="Prediction not found")
     return prediction
+
+
+@router.get("/match/{match_id}/next-events/prediction", response_model=NextEventPredictionResponseSchema)
+def get_match_next_events_prediction(
+    match_id: int,
+    minute: Optional[int] = Query(None, ge=1, le=130, description="Optional minute override for live inference context."),
+    db: Session = Depends(get_db),
+):
+    match = db.query(Match).filter(Match.id == match_id).first()
+    if not match:
+        raise HTTPException(status_code=404, detail="Match not found")
+
+    team_cache = {}
+    league_cache = {}
+
+    home_team = _get_cached_team(match.home_team_id, db, team_cache)
+    away_team = _get_cached_team(match.away_team_id, db, team_cache)
+    if not home_team or not away_team:
+        raise HTTPException(status_code=404, detail="Match teams not found")
+
+    home_league = _get_league_for_team(home_team, db, league_cache)
+    away_league = _get_league_for_team(away_team, db, league_cache)
+
+    if not (_is_supported_league(home_league) or _is_supported_league(away_league)):
+        raise HTTPException(
+            status_code=403,
+            detail="Next-event predictions are limited to Top 5 leagues + UCL matches.",
+        )
+
+    payload = next_event_inference_service.predict_for_match(
+        db=db,
+        match=match,
+        minute_override=minute,
+        top_k=3,
+    )
+
+    global_limitations = list(payload.get("global_limitations", []))
+    if _normalize_text(match.status) not in {_normalize_text(status) for status in IN_PLAY_MATCH_STATUSES}:
+        global_limitations.append(
+            "Match is not in-play; this is a baseline context projection from available pre-match/timeline data."
+        )
+
+    deduped = []
+    for note in global_limitations:
+        if note and note not in deduped:
+            deduped.append(note)
+
+    payload["global_limitations"] = deduped
+    return payload
 
 @router.get("/match/{match_id}/events")
 def get_match_events(match_id: int, db: Session = Depends(get_db)):

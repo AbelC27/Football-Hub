@@ -2,6 +2,7 @@ import Link from "next/link";
 import {
   CalendarClock,
   Clock3,
+  Info,
   MapPin,
   ShieldAlert,
   Swords,
@@ -9,7 +10,11 @@ import {
   Trophy,
   ArrowRightLeft,
 } from "lucide-react";
-import { MatchExperience } from "@/lib/api";
+import {
+  MatchExperience,
+  NextEventPredictionResponse,
+  NextEventTaskPrediction,
+} from "@/lib/api";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
@@ -17,6 +22,9 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 
 interface MatchExperienceViewProps {
   data: MatchExperience;
+  nextEventPrediction?: NextEventPredictionResponse | null;
+  nextEventPredictionLoading?: boolean;
+  nextEventPredictionError?: string | null;
 }
 
 function formatKickoff(value: string) {
@@ -64,6 +72,77 @@ function EventBadge({ type }: { type: string }) {
   if (type === "assist") return <Badge tone="default">Assist</Badge>;
   if (type === "card") return <Badge tone="danger">Card</Badge>;
   return <Badge tone="default">Event</Badge>;
+}
+
+function confidenceTone(label: string): "success" | "warning" | "danger" {
+  const normalized = label.toLowerCase();
+  if (normalized === "high") return "success";
+  if (normalized === "medium") return "warning";
+  return "danger";
+}
+
+function sourceLabel(source: string) {
+  if (source === "trained_model") return "trained model";
+  if (source === "heuristic_fallback") return "heuristic fallback";
+  return source;
+}
+
+function NextEventTaskCard({
+  title,
+  payload,
+}: {
+  title: string;
+  payload: NextEventTaskPrediction;
+}) {
+  return (
+    <div className="space-y-3 rounded-xl border border-neutral-200 bg-neutral-50 p-4 dark:border-neutral-800 dark:bg-neutral-900/70">
+      <div className="flex flex-wrap items-center gap-2">
+        <h4 className="text-sm font-semibold uppercase tracking-wide text-neutral-700 dark:text-neutral-200">{title}</h4>
+        <Badge tone={confidenceTone(payload.confidence_label)}>{payload.confidence_label.toUpperCase()}</Badge>
+        <Badge>{(payload.confidence_score * 100).toFixed(1)}%</Badge>
+        <Badge>{sourceLabel(payload.source)}</Badge>
+      </div>
+
+      <p className="text-xs text-neutral-500 dark:text-neutral-400">
+        Minute {payload.minute_context} · Top-3 mass from full distribution: {(payload.top3_probability_mass_from_full_distribution * 100).toFixed(1)}%
+      </p>
+
+      {payload.top_candidates.length === 0 ? (
+        <div className="rounded-lg border border-dashed border-neutral-300 p-3 text-sm text-neutral-500 dark:border-neutral-700 dark:text-neutral-400">
+          No candidate ranking available.
+        </div>
+      ) : (
+        <div className="space-y-2">
+          {payload.top_candidates.map((candidate) => (
+            <Link
+              key={`${payload.task}-${candidate.player_id}-${candidate.rank}`}
+              href={`/player/${candidate.player_id}`}
+              className="flex items-center justify-between rounded-lg border border-neutral-200 bg-white px-3 py-2 transition hover:border-neutral-300 hover:bg-neutral-100 dark:border-neutral-800 dark:bg-neutral-950 dark:hover:border-neutral-700 dark:hover:bg-neutral-900"
+            >
+              <div className="min-w-0">
+                <p className="truncate text-sm font-semibold text-neutral-900 dark:text-neutral-100">
+                  #{candidate.rank} {candidate.player_name}
+                </p>
+                <p className="truncate text-xs text-neutral-500 dark:text-neutral-400">{candidate.team_name}</p>
+              </div>
+              <p className="text-sm font-bold text-sky-600 dark:text-sky-400">{(candidate.probability * 100).toFixed(1)}%</p>
+            </Link>
+          ))}
+        </div>
+      )}
+
+      {payload.data_limitations.length > 0 ? (
+        <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-900/50 dark:bg-amber-900/20 dark:text-amber-200">
+          <p className="mb-1 font-semibold">Data limitations</p>
+          <ul className="list-disc space-y-1 pl-4">
+            {payload.data_limitations.map((note, index) => (
+              <li key={`${payload.task}-limit-${index}`}>{note}</li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+    </div>
+  );
 }
 
 function PlayerRow({ id, name, position, photo_url }: { id: number; name: string; position?: string | null; photo_url?: string | null }) {
@@ -124,7 +203,12 @@ function TeamFormColumn({
   );
 }
 
-export function MatchExperienceView({ data }: MatchExperienceViewProps) {
+export function MatchExperienceView({
+  data,
+  nextEventPrediction = null,
+  nextEventPredictionLoading = false,
+  nextEventPredictionError = null,
+}: MatchExperienceViewProps) {
   const home = data.teams.home;
   const away = data.teams.away;
   const score = data.header.score;
@@ -259,6 +343,60 @@ export function MatchExperienceView({ data }: MatchExperienceViewProps) {
                 </CardContent>
               </Card>
             </div>
+
+            <Card className="mt-4">
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2 text-xl">
+                  <Info className="h-5 w-5" />
+                  Next Goal Scorer and Next Assist Provider
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                {nextEventPredictionLoading && !nextEventPrediction ? (
+                  <div className="rounded-lg border border-dashed border-neutral-300 p-5 text-sm text-neutral-500 dark:border-neutral-700 dark:text-neutral-400">
+                    Loading next-event predictions...
+                  </div>
+                ) : null}
+
+                {nextEventPredictionError && !nextEventPrediction ? (
+                  <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-900/50 dark:bg-red-900/20 dark:text-red-200">
+                    {nextEventPredictionError}
+                  </div>
+                ) : null}
+
+                {nextEventPrediction ? (
+                  <>
+                    <div className="flex flex-wrap items-center gap-2 text-xs">
+                      <Badge>{nextEventPrediction.scope}</Badge>
+                      <Badge>{nextEventPrediction.model_version}</Badge>
+                      <Badge>{new Date(nextEventPrediction.generated_at_utc).toLocaleTimeString()}</Badge>
+                    </div>
+
+                    <div className="grid gap-4 lg:grid-cols-2">
+                      <NextEventTaskCard title="Next Goal" payload={nextEventPrediction.next_goal} />
+                      <NextEventTaskCard title="Next Assist" payload={nextEventPrediction.next_assist} />
+                    </div>
+
+                    {nextEventPrediction.global_limitations.length > 0 ? (
+                      <div className="rounded-lg border border-neutral-200 bg-neutral-50 px-4 py-3 text-xs text-neutral-600 dark:border-neutral-800 dark:bg-neutral-900 dark:text-neutral-300">
+                        <p className="mb-1 font-semibold">Model limitations</p>
+                        <ul className="list-disc space-y-1 pl-4">
+                          {nextEventPrediction.global_limitations.map((note, index) => (
+                            <li key={`global-limit-${index}`}>{note}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    ) : null}
+                  </>
+                ) : null}
+
+                {!nextEventPredictionLoading && !nextEventPredictionError && !nextEventPrediction ? (
+                  <div className="rounded-lg border border-dashed border-neutral-300 p-5 text-sm text-neutral-500 dark:border-neutral-700 dark:text-neutral-400">
+                    Next-event predictions are not available for this match yet.
+                  </div>
+                ) : null}
+              </CardContent>
+            </Card>
           </TabsContent>
 
           <TabsContent value="events">

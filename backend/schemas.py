@@ -183,6 +183,38 @@ class MatchExperience(BaseModel):
     squads: MatchExperienceSquads
     partial_failures: List[MatchExperiencePartialFailure] = []
 
+
+class NextEventCandidate(BaseModel):
+    rank: int
+    player_id: int
+    player_name: str
+    team_id: int
+    team_name: str
+    probability: float
+    full_distribution_probability: float
+
+
+class NextEventTaskPrediction(BaseModel):
+    task: str
+    minute_context: int
+    source: str
+    candidate_count: int
+    top_candidates: List[NextEventCandidate]
+    top3_probability_mass_from_full_distribution: float
+    confidence_score: float
+    confidence_label: str
+    data_limitations: List[str] = []
+
+
+class NextEventPredictionResponse(BaseModel):
+    match_id: int
+    scope: str
+    model_version: str
+    generated_at_utc: str
+    global_limitations: List[str] = []
+    next_goal: NextEventTaskPrediction
+    next_assist: NextEventTaskPrediction
+
 class Standing(BaseModel):
     rank: int
     team_id: int

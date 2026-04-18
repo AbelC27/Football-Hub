@@ -5,7 +5,11 @@ import { useParams } from 'next/navigation';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { AlertTriangle, RefreshCw } from 'lucide-react';
-import { getMatchExperience, MatchExperience } from '@/lib/api';
+import {
+    getMatchExperience,
+    getMatchNextEventsPrediction,
+    MatchExperience,
+} from '@/lib/api';
 import { useWebSocket } from '@/hooks/useWebSocket';
 import { MatchExperienceView } from '@/components/MatchExperienceView';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -104,6 +108,18 @@ export default function MatchDetailsPage() {
         },
     });
 
+    const nextEventsQuery = useQuery({
+        queryKey: ['match-next-events', matchId],
+        queryFn: () => getMatchNextEventsPrediction(matchId as number),
+        enabled: typeof matchId === 'number' && matchId > 0,
+        staleTime: 10_000,
+        retry: false,
+        refetchInterval: () => {
+            const status = query.data?.header.status?.toUpperCase();
+            return status && ['LIVE', 'HT', 'ET', 'P', '1H', '2H'].includes(status) ? 12_000 : false;
+        },
+    });
+
     useEffect(() => {
         if (query.isSuccess && !successToastShown.current) {
             successToastShown.current = true;
@@ -156,6 +172,8 @@ export default function MatchDetailsPage() {
                 },
             };
         });
+
+        queryClient.invalidateQueries({ queryKey: ['match-next-events', matchId] });
     }, [lastMessage, matchId, queryClient]);
 
     if (!matchId || matchId <= 0) {
@@ -185,5 +203,18 @@ export default function MatchDetailsPage() {
         );
     }
 
-    return <MatchExperienceView data={query.data} />;
+    const nextEventsError = nextEventsQuery.isError
+        ? nextEventsQuery.error instanceof Error
+            ? nextEventsQuery.error.message
+            : 'Could not load next-goal and next-assist predictions.'
+        : null;
+
+    return (
+        <MatchExperienceView
+            data={query.data}
+            nextEventPrediction={nextEventsQuery.data || null}
+            nextEventPredictionLoading={nextEventsQuery.isPending}
+            nextEventPredictionError={nextEventsError}
+        />
+    );
 }

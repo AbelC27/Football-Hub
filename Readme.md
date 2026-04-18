@@ -222,8 +222,6 @@ Output a concise implementation report with endpoint contracts and UI behavior.
 Prompt for 02-next-goal-next-assist-model.md
 
 
-AM AJUNs AICI
-
 Prompt text:
 Build the first production-ready baseline for predicting next goal scorer and next assist provider in live matches.
 Requirements:
@@ -245,6 +243,8 @@ Add docs for retraining workflow and required data refresh cadence.
 Provide final summary listing files changed, model assumptions, and known limitations.
 
 Prompt for 05-deep-fantasy-player-salary-cap.md
+
+Acm aici
 
 Prompt text:
 Implement player-based fantasy mode with salary cap in this app, extending current fantasy features without breaking existing flows.
