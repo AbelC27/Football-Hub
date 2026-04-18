@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 from sqlalchemy import or_
-from typing import List
+from typing import Any, Dict, List
 import re
 try:
     from backend.database import get_db
@@ -579,6 +579,418 @@ def _calculate_metric_delta(left_value, right_value, precision=2):
         return None
 
     return round(left_number - right_number, precision)
+
+
+POSITION_GROUP_ORDER = ["Goalkeeper", "Defender", "Midfielder", "Attacker", "Unknown"]
+STARTER_TARGET_BY_POSITION = {
+    "Goalkeeper": 1,
+    "Defender": 4,
+    "Midfielder": 3,
+    "Attacker": 3,
+    "Unknown": 2,
+}
+
+
+def _average_or_none(values, precision=2):
+    valid_values = [value for value in values if value is not None]
+    if not valid_values:
+        return None
+
+    return round(sum(valid_values) / len(valid_values), precision)
+
+
+def _resolve_team_result(team_score, opponent_score):
+    if team_score > opponent_score:
+        return "W", 3
+
+    if team_score < opponent_score:
+        return "L", 0
+
+    return "D", 1
+
+
+def _resolve_position_group(position):
+    normalized = _normalize_text(position)
+
+    if "goalkeeper" in normalized or normalized == "gk" or "keeper" in normalized:
+        return "Goalkeeper"
+    if "defence" in normalized or "defender" in normalized or "back" in normalized:
+        return "Defender"
+    if "midfield" in normalized or "midfielder" in normalized:
+        return "Midfielder"
+    if (
+        "attacker" in normalized
+        or "forward" in normalized
+        or "striker" in normalized
+        or "winger" in normalized
+    ):
+        return "Attacker"
+
+    return "Unknown"
+
+
+def _build_player_quality_score(player):
+    rating = _to_float_or_none(player.rating_season)
+    goals = _to_int_or_none(player.goals_season)
+    assists = _to_int_or_none(player.assists_season)
+    minutes = _to_int_or_none(player.minutes_played)
+
+    components = []
+
+    if rating is not None:
+        components.append((max(0.0, min(1.0, rating / 10.0)), 0.55))
+
+    if goals is not None or assists is not None:
+        goal_involvements = (goals or 0) + (assists or 0)
+        components.append((max(0.0, min(1.0, goal_involvements / 18.0)), 0.25))
+
+    if minutes is not None:
+        components.append((max(0.0, min(1.0, minutes / 2500.0)), 0.20))
+
+    if not components:
+        return None
+
+    available_weight = sum(weight for _, weight in components)
+    weighted_score = sum(component_value * weight for component_value, weight in components)
+
+    return round((weighted_score / available_weight) * 100, 1)
+
+
+def _build_player_availability_score(player):
+    minutes = _to_int_or_none(player.minutes_played)
+    if minutes is None:
+        return None
+
+    # Approximate availability with minutes played up to a 10-match baseline.
+    return round(max(0.0, min(1.0, minutes / 900.0)) * 100, 1)
+
+
+def _build_supported_team_match_history(team_id, db: Session, team_cache, league_cache):
+    candidate_matches = (
+        db.query(Match)
+        .filter(
+            Match.status.in_(list(FINISHED_MATCH_STATUSES)),
+            Match.home_score.isnot(None),
+            Match.away_score.isnot(None),
+            or_(Match.home_team_id == team_id, Match.away_team_id == team_id),
+        )
+        .order_by(Match.start_time.desc())
+        .limit(120)
+        .all()
+    )
+
+    history = []
+
+    for match in candidate_matches:
+        home_team = _get_cached_team(match.home_team_id, db, team_cache)
+        away_team = _get_cached_team(match.away_team_id, db, team_cache)
+
+        home_league = _get_league_for_team(home_team, db, league_cache)
+        away_league = _get_league_for_team(away_team, db, league_cache)
+
+        if not (_is_supported_league(home_league) or _is_supported_league(away_league)):
+            continue
+
+        is_home = match.home_team_id == team_id
+        opponent_team = away_team if is_home else home_team
+
+        team_score = match.home_score if is_home else match.away_score
+        opponent_score = match.away_score if is_home else match.home_score
+        result, points = _resolve_team_result(team_score, opponent_score)
+
+        competition = _resolve_competition(home_league, away_league)
+
+        history.append(
+            {
+                "match_id": match.id,
+                "start_time": match.start_time,
+                "opponent_name": opponent_team.name if opponent_team else "Unknown",
+                "opponent_logo": opponent_team.logo_url if opponent_team else None,
+                "is_home": is_home,
+                "team_score": team_score,
+                "opponent_score": opponent_score,
+                "result": result,
+                "points": points,
+                "competition_name": competition.name if competition else None,
+            }
+        )
+
+    return history
+
+
+def _build_team_totals(match_history):
+    wins = 0
+    draws = 0
+    losses = 0
+    goals_scored = 0
+    goals_conceded = 0
+    clean_sheets = 0
+
+    for row in match_history:
+        goals_scored += row["team_score"]
+        goals_conceded += row["opponent_score"]
+
+        if row["opponent_score"] == 0:
+            clean_sheets += 1
+
+        if row["result"] == "W":
+            wins += 1
+        elif row["result"] == "D":
+            draws += 1
+        else:
+            losses += 1
+
+    matches_played = len(match_history)
+    form_last_five = [row["result"] for row in reversed(match_history[:5])]
+
+    return {
+        "matches_played": matches_played,
+        "wins": wins,
+        "draws": draws,
+        "losses": losses,
+        "goals_scored": goals_scored,
+        "goals_conceded": goals_conceded,
+        "goal_difference": goals_scored - goals_conceded,
+        "clean_sheets": clean_sheets,
+        "win_rate": round((wins / matches_played) * 100, 1) if matches_played > 0 else 0.0,
+        "average_goals_scored": round(goals_scored / matches_played, 2) if matches_played > 0 else 0.0,
+        "average_goals_conceded": round(goals_conceded / matches_played, 2) if matches_played > 0 else 0.0,
+        "form": form_last_five,
+    }
+
+
+def _build_form_window_summary(match_history, window_size):
+    window_matches = match_history[:window_size]
+    chronological = list(reversed(window_matches))
+
+    points_total = 0
+    goals_for = 0
+    goals_against = 0
+    wins = 0
+    draws = 0
+    losses = 0
+
+    home_away_split = {
+        "home": {
+            "played": 0,
+            "wins": 0,
+            "draws": 0,
+            "losses": 0,
+            "points": 0,
+            "goals_for": 0,
+            "goals_against": 0,
+        },
+        "away": {
+            "played": 0,
+            "wins": 0,
+            "draws": 0,
+            "losses": 0,
+            "points": 0,
+            "goals_for": 0,
+            "goals_against": 0,
+        },
+    }
+
+    form_sequence = []
+    points_trend = []
+
+    cumulative_points = 0
+    for index, row in enumerate(chronological, start=1):
+        points_total += row["points"]
+        goals_for += row["team_score"]
+        goals_against += row["opponent_score"]
+
+        if row["result"] == "W":
+            wins += 1
+        elif row["result"] == "D":
+            draws += 1
+        else:
+            losses += 1
+
+        split_key = "home" if row["is_home"] else "away"
+        split = home_away_split[split_key]
+        split["played"] += 1
+        split["points"] += row["points"]
+        split["goals_for"] += row["team_score"]
+        split["goals_against"] += row["opponent_score"]
+
+        if row["result"] == "W":
+            split["wins"] += 1
+        elif row["result"] == "D":
+            split["draws"] += 1
+        else:
+            split["losses"] += 1
+
+        cumulative_points += row["points"]
+        form_sequence.append(
+            {
+                "match_id": row["match_id"],
+                "start_time": row["start_time"],
+                "opponent_name": row["opponent_name"],
+                "opponent_logo": row["opponent_logo"],
+                "is_home": row["is_home"],
+                "result": row["result"],
+                "points": row["points"],
+                "goals_for": row["team_score"],
+                "goals_against": row["opponent_score"],
+                "competition_name": row["competition_name"],
+                "cumulative_points": cumulative_points,
+            }
+        )
+
+        points_trend.append(
+            {
+                "label": f"M{index}",
+                "match_id": row["match_id"],
+                "result": row["result"],
+                "points": row["points"],
+                "cumulative_points": cumulative_points,
+            }
+        )
+
+    for split in home_away_split.values():
+        split["goal_difference"] = split["goals_for"] - split["goals_against"]
+        split["points_per_match"] = round(split["points"] / split["played"], 2) if split["played"] > 0 else 0.0
+
+    matches_count = len(window_matches)
+
+    return {
+        "window": window_size,
+        "matches_count": matches_count,
+        "wins": wins,
+        "draws": draws,
+        "losses": losses,
+        "points": points_total,
+        "points_per_match": round(points_total / matches_count, 2) if matches_count > 0 else 0.0,
+        "goals_for": goals_for,
+        "goals_against": goals_against,
+        "goal_difference": goals_for - goals_against,
+        "form": [row["result"] for row in form_sequence],
+        "form_sequence": form_sequence,
+        "points_trend": points_trend,
+        "result_distribution": {
+            "W": wins,
+            "D": draws,
+            "L": losses,
+        },
+        "home_away_split": home_away_split,
+    }
+
+
+def _build_squad_depth_metrics(team_id, db: Session):
+    players = (
+        db.query(Player)
+        .filter(Player.team_id == team_id)
+        .order_by(Player.position.asc(), Player.name.asc())
+        .all()
+    )
+
+    position_groups: Dict[str, List[Dict[str, Any]]] = {key: [] for key in POSITION_GROUP_ORDER}
+
+    for player in players:
+        group = _resolve_position_group(player.position)
+        quality_score = _build_player_quality_score(player)
+        availability_score = _build_player_availability_score(player)
+
+        position_groups[group].append(
+            {
+                "id": player.id,
+                "name": player.name,
+                "position": player.position or "Unknown",
+                "minutes": _to_int_or_none(player.minutes_played),
+                "quality_score": quality_score,
+                "availability_score": availability_score,
+            }
+        )
+
+    position_payload = []
+    starter_quality_values = []
+    bench_quality_values = []
+    availability_values = []
+    quality_data_points = 0
+    availability_data_points = 0
+
+    for position_key in POSITION_GROUP_ORDER:
+        entries = position_groups[position_key]
+
+        sorted_entries = sorted(
+            entries,
+            key=lambda entry: (
+                entry["quality_score"] is not None,
+                entry["quality_score"] or 0,
+                entry["minutes"] or 0,
+                entry["name"],
+            ),
+            reverse=True,
+        )
+
+        starter_target = min(STARTER_TARGET_BY_POSITION[position_key], len(sorted_entries))
+        starters = sorted_entries[:starter_target]
+        bench = sorted_entries[starter_target:]
+
+        starter_quality = _average_or_none([entry["quality_score"] for entry in starters], precision=1)
+        bench_quality = _average_or_none([entry["quality_score"] for entry in bench], precision=1)
+        availability_pct = _average_or_none([entry["availability_score"] for entry in sorted_entries], precision=1)
+
+        position_quality_points = len([entry for entry in sorted_entries if entry["quality_score"] is not None])
+        position_availability_points = len(
+            [entry for entry in sorted_entries if entry["availability_score"] is not None]
+        )
+
+        quality_data_points += position_quality_points
+        availability_data_points += position_availability_points
+
+        if starter_quality is not None:
+            starter_quality_values.append(starter_quality)
+
+        if bench_quality is not None:
+            bench_quality_values.append(bench_quality)
+
+        if availability_pct is not None:
+            availability_values.append(availability_pct)
+
+        depth_delta = None
+        if starter_quality is not None and bench_quality is not None:
+            depth_delta = round(starter_quality - bench_quality, 1)
+
+        position_payload.append(
+            {
+                "position_key": position_key.lower(),
+                "position_label": position_key,
+                "squad_count": len(sorted_entries),
+                "starter_count": len(starters),
+                "bench_count": len(bench),
+                "starter_quality": starter_quality,
+                "bench_quality": bench_quality,
+                "depth_delta": depth_delta,
+                "availability_pct": availability_pct,
+                "quality_data_points": position_quality_points,
+                "availability_data_points": position_availability_points,
+            }
+        )
+
+    squad_size = len(players)
+    quality_coverage_pct = round((quality_data_points / squad_size) * 100, 1) if squad_size > 0 else 0.0
+    availability_coverage_pct = round((availability_data_points / squad_size) * 100, 1) if squad_size > 0 else 0.0
+
+    fallback_notes = []
+    if quality_data_points == 0:
+        fallback_notes.append("Starter/bench quality uses rating-goals-minutes and is unavailable for this squad.")
+    if availability_data_points == 0:
+        fallback_notes.append("Availability is missing because minutes-played data is not available.")
+
+    return {
+        "position_groups": position_payload,
+        "overall": {
+            "squad_size": squad_size,
+            "starter_quality": _average_or_none(starter_quality_values, precision=1),
+            "bench_quality": _average_or_none(bench_quality_values, precision=1),
+            "availability_pct": _average_or_none(availability_values, precision=1),
+            "quality_coverage_pct": quality_coverage_pct,
+            "availability_coverage_pct": availability_coverage_pct,
+        },
+        "fallback_notes": fallback_notes,
+    }
 
 @router.get("/leagues")
 def get_leagues(db: Session = Depends(get_db)):
@@ -1214,82 +1626,68 @@ def get_player_enhanced(player_id: int, db: Session = Depends(get_db)):
 
 @router.get("/teams/{team_id}/statistics")
 def get_team_statistics(team_id: int, db: Session = Depends(get_db)):
-    """Get comprehensive team statistics"""
+    """Get team analysis metrics for Top 5 leagues + UEFA Champions League teams."""
     team = db.query(Team).filter(Team.id == team_id).first()
     if not team:
         raise HTTPException(status_code=404, detail="Team not found")
-    
-    # Get all matches for this team
-    home_matches = db.query(Match).filter(Match.home_team_id == team_id).all()
-    away_matches = db.query(Match).filter(Match.away_team_id == team_id).all()
-    all_matches = home_matches + away_matches
-    
-    # Calculate statistics
-    total_matches = len([m for m in all_matches if m.status == 'FT'])
-    wins = 0
-    draws = 0
-    losses = 0
-    goals_scored = 0
-    goals_conceded = 0
-    clean_sheets = 0
-    
-    for match in all_matches:
-        if match.status != 'FT':
-            continue
-            
-        is_home = match.home_team_id == team_id
-        team_score = match.home_score if is_home else match.away_score
-        opp_score = match.away_score if is_home else match.home_score
-        
-        if team_score is not None and opp_score is not None:
-            goals_scored += team_score
-            goals_conceded += opp_score
-            
-            if opp_score == 0:
-                clean_sheets += 1
-            
-            if team_score > opp_score:
-                wins += 1
-            elif team_score < opp_score:
-                losses += 1
-            else:
-                draws += 1
-    
-    # Recent form (last 5 matches)
-    recent_matches = sorted(
-        [m for m in all_matches if m.status == 'FT'],
-        key=lambda x: x.start_time,
-        reverse=True
-    )[:5]
-    
-    form = []
-    for match in reversed(recent_matches):
-        is_home = match.home_team_id == team_id
-        team_score = match.home_score if is_home else match.away_score
-        opp_score = match.away_score if is_home else match.home_score
-        
-        if team_score > opp_score:
-            form.append('W')
-        elif team_score < opp_score:
-            form.append('L')
-        else:
-            form.append('D')
-    
+
+    team_cache = {team_id: team}
+    league_cache = {}
+    team_league = _get_league_for_team(team, db, league_cache)
+
+    if not _is_supported_league(team_league):
+        raise HTTPException(
+            status_code=403,
+            detail="Team analysis is limited to Top 5 leagues + UCL teams.",
+        )
+
+    match_history = _build_supported_team_match_history(team_id, db, team_cache, league_cache)
+    totals = _build_team_totals(match_history)
+    last_five = _build_form_window_summary(match_history, 5)
+    last_ten = _build_form_window_summary(match_history, 10)
+    squad_depth = _build_squad_depth_metrics(team_id, db)
+
+    fallback_notes = []
+    if totals["matches_played"] == 0:
+        fallback_notes.append("No supported finished matches are available yet for this team.")
+    elif last_ten["matches_count"] < 10:
+        fallback_notes.append("Last-10 form is partial because fewer than 10 supported matches were found.")
+
+    fallback_notes.extend(squad_depth.get("fallback_notes", []))
+
     return {
         "team_id": team_id,
         "team_name": team.name,
-        "matches_played": total_matches,
-        "wins": wins,
-        "draws": draws,
-        "losses": losses,
-        "goals_scored": goals_scored,
-        "goals_conceded": goals_conceded,
-        "goal_difference": goals_scored - goals_conceded,
-        "clean_sheets": clean_sheets,
-        "win_rate": round((wins / total_matches * 100) if total_matches > 0 else 0, 1),
-        "form": form,
-        "average_goals_scored": round(goals_scored / total_matches, 2) if total_matches > 0 else 0,
-        "average_goals_conceded": round(goals_conceded / total_matches, 2) if total_matches > 0 else 0
+        "scope": "Top 5 leagues + UEFA Champions League",
+        "league": {
+            "id": team_league.id if team_league else None,
+            "name": team_league.name if team_league else None,
+            "country": team_league.country if team_league else None,
+        },
+        "matches_played": totals["matches_played"],
+        "wins": totals["wins"],
+        "draws": totals["draws"],
+        "losses": totals["losses"],
+        "goals_scored": totals["goals_scored"],
+        "goals_conceded": totals["goals_conceded"],
+        "goal_difference": totals["goal_difference"],
+        "clean_sheets": totals["clean_sheets"],
+        "win_rate": totals["win_rate"],
+        "form": totals["form"],
+        "average_goals_scored": totals["average_goals_scored"],
+        "average_goals_conceded": totals["average_goals_conceded"],
+        "form_metrics": {
+            "last_5": last_five,
+            "last_10": last_ten,
+        },
+        "squad_depth": squad_depth,
+        "data_completeness": {
+            "has_last_5": last_five["matches_count"] >= 5,
+            "has_last_10": last_ten["matches_count"] >= 10,
+            "squad_quality_coverage_pct": squad_depth["overall"].get("quality_coverage_pct", 0.0),
+            "squad_availability_coverage_pct": squad_depth["overall"].get("availability_coverage_pct", 0.0),
+        },
+        "fallback_notes": fallback_notes,
     }
 
 @router.get("/teams/{team1_id}/vs/{team2_id}")

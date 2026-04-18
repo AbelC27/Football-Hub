@@ -221,6 +221,9 @@ Output a concise implementation report with endpoint contracts and UI behavior.
 
 Prompt for 02-next-goal-next-assist-model.md
 
+
+AM AJUNs AICI
+
 Prompt text:
 Build the first production-ready baseline for predicting next goal scorer and next assist provider in live matches.
 Requirements:
