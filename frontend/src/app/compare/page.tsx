@@ -1,15 +1,11 @@
 'use client';
 
 import { useState } from 'react';
-import { Search } from 'lucide-react';
-import Link from 'next/link';
-import { getTeams, getPlayers, TeamDetailed, PlayerDetailed } from '@/lib/api';
+import { getTeams, getPlayers } from '@/lib/api';
 import { SearchableSelect } from '@/components/SearchableSelect';
 
 export default function ComparePage() {
     const [searchType, setSearchType] = useState<'teams' | 'players'>('teams');
-    const [searchQuery1, setSearchQuery1] = useState('');
-    const [searchQuery2, setSearchQuery2] = useState('');
     const [selected1, setSelected1] = useState<{ id: number; name: string; image_url?: string; subtitle?: string } | null>(null);
     const [selected2, setSelected2] = useState<{ id: number; name: string; image_url?: string; subtitle?: string } | null>(null);
 
@@ -82,8 +78,13 @@ export default function ComparePage() {
                                     const res = await getTeams(undefined, query);
                                     return res.map(t => ({ id: t.id, name: t.name, image_url: t.logo_url, subtitle: t.league?.name }));
                                 } else {
-                                    const res = await getPlayers(undefined, undefined, query);
-                                    return res.map(p => ({ id: p.id, name: p.name, image_url: p.team?.logo_url, subtitle: p.team?.name }));
+                                    const res = await getPlayers(undefined, undefined, query, true);
+                                    return res.map(p => ({
+                                        id: p.id,
+                                        name: p.name,
+                                        image_url: p.team?.logo_url,
+                                        subtitle: [p.team?.name, p.league?.name].filter(Boolean).join(' • '),
+                                    }));
                                 }
                             }}
                             onSelect={setSelected1}
@@ -106,8 +107,13 @@ export default function ComparePage() {
                                     const res = await getTeams(undefined, query);
                                     return res.map(t => ({ id: t.id, name: t.name, image_url: t.logo_url, subtitle: t.league?.name }));
                                 } else {
-                                    const res = await getPlayers(undefined, undefined, query);
-                                    return res.map(p => ({ id: p.id, name: p.name, image_url: p.team?.logo_url, subtitle: p.team?.name }));
+                                    const res = await getPlayers(undefined, undefined, query, true);
+                                    return res.map(p => ({
+                                        id: p.id,
+                                        name: p.name,
+                                        image_url: p.team?.logo_url,
+                                        subtitle: [p.team?.name, p.league?.name].filter(Boolean).join(' • '),
+                                    }));
                                 }
                             }}
                             onSelect={setSelected2}

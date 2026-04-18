@@ -190,6 +190,396 @@ def _build_recent_form(team_id, current_match_id, db: Session, team_cache, leagu
 
     return results
 
+
+def _to_int_or_none(value):
+    if value is None or value == "":
+        return None
+
+    try:
+        return int(float(value))
+    except (TypeError, ValueError):
+        return None
+
+
+def _to_float_or_none(value):
+    if value is None or value == "":
+        return None
+
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _clamp01(value):
+    if value is None:
+        return None
+
+    return max(0.0, min(1.0, value))
+
+
+def _parse_birth_date(value):
+    if not value:
+        return None
+
+    if isinstance(value, datetime.datetime):
+        return value.date()
+
+    if isinstance(value, datetime.date):
+        return value
+
+    if isinstance(value, str):
+        cleaned = value.strip()
+        if not cleaned:
+            return None
+
+        try:
+            return datetime.datetime.fromisoformat(cleaned.replace("Z", "+00:00")).date()
+        except ValueError:
+            pass
+
+        for date_fmt in ("%Y-%m-%d", "%d/%m/%Y", "%Y/%m/%d"):
+            try:
+                return datetime.datetime.strptime(cleaned, date_fmt).date()
+            except ValueError:
+                continue
+
+    return None
+
+
+def _calculate_age(birth_value):
+    birth_date = _parse_birth_date(birth_value)
+    if not birth_date:
+        return None
+
+    today = datetime.date.today()
+    return today.year - birth_date.year - ((today.month, today.day) < (birth_date.month, birth_date.day))
+
+
+def _matches_player_name(event_player_name, player_name):
+    event_name = _normalize_text(event_player_name)
+    target_name = _normalize_text(player_name)
+
+    if not event_name or not target_name:
+        return False
+
+    return event_name == target_name or event_name in target_name or target_name in event_name
+
+
+def _build_player_performance_snapshot(player, db: Session, team_cache, league_cache):
+    if not player or not player.team_id:
+        return {
+            "recent_form": [],
+            "yellow_cards": None,
+            "red_cards": None,
+            "matches_considered": 0,
+        }
+
+    candidate_matches = (
+        db.query(Match)
+        .filter(
+            Match.status.in_(list(FINISHED_MATCH_STATUSES)),
+            or_(Match.home_team_id == player.team_id, Match.away_team_id == player.team_id),
+        )
+        .order_by(Match.start_time.desc())
+        .limit(80)
+        .all()
+    )
+
+    supported_matches = []
+    for match in candidate_matches:
+        home_team = _get_cached_team(match.home_team_id, db, team_cache)
+        away_team = _get_cached_team(match.away_team_id, db, team_cache)
+        home_league = _get_league_for_team(home_team, db, league_cache)
+        away_league = _get_league_for_team(away_team, db, league_cache)
+
+        if _is_supported_league(home_league) or _is_supported_league(away_league):
+            supported_matches.append(match)
+
+    if not supported_matches:
+        return {
+            "recent_form": [],
+            "yellow_cards": None,
+            "red_cards": None,
+            "matches_considered": 0,
+        }
+
+    match_ids = [match.id for match in supported_matches]
+    events_by_match = {match_id: [] for match_id in match_ids}
+
+    event_rows = (
+        db.query(MatchEvent)
+        .filter(MatchEvent.match_id.in_(match_ids))
+        .order_by(MatchEvent.minute.asc(), MatchEvent.id.asc())
+        .all()
+    )
+    for event in event_rows:
+        events_by_match.setdefault(event.match_id, []).append(event)
+
+    yellow_cards = 0
+    red_cards = 0
+    recent_form = []
+
+    for match in supported_matches:
+        is_home = match.home_team_id == player.team_id
+        home_team = _get_cached_team(match.home_team_id, db, team_cache)
+        away_team = _get_cached_team(match.away_team_id, db, team_cache)
+        opponent_team = away_team if is_home else home_team
+
+        team_score = match.home_score if is_home else match.away_score
+        opponent_score = match.away_score if is_home else match.home_score
+
+        result = None
+        if team_score is not None and opponent_score is not None:
+            if team_score > opponent_score:
+                result = "W"
+            elif team_score < opponent_score:
+                result = "L"
+            else:
+                result = "D"
+
+        player_goals = 0
+        player_assists = 0
+        player_yellow = 0
+        player_red = 0
+
+        for event in events_by_match.get(match.id, []):
+            if not _matches_player_name(event.player_name, player.name):
+                continue
+
+            event_kind = _normalize_event_type(event.event_type)
+            detail_normalized = _normalize_text(event.detail)
+
+            if event_kind == "goal":
+                player_goals += 1
+            elif event_kind == "assist":
+                player_assists += 1
+            elif event_kind == "card":
+                if "red" in detail_normalized:
+                    player_red += 1
+                else:
+                    player_yellow += 1
+
+        yellow_cards += player_yellow
+        red_cards += player_red
+
+        if len(recent_form) < 5:
+            recent_form.append(
+                {
+                    "match_id": match.id,
+                    "start_time": match.start_time,
+                    "result": result,
+                    "opponent_name": opponent_team.name if opponent_team else "Unknown",
+                    "opponent_logo": opponent_team.logo_url if opponent_team else None,
+                    "goals": player_goals,
+                    "assists": player_assists,
+                    "yellow_cards": player_yellow,
+                    "red_cards": player_red,
+                }
+            )
+
+    return {
+        "recent_form": recent_form,
+        "yellow_cards": yellow_cards,
+        "red_cards": red_cards,
+        "matches_considered": len(supported_matches),
+    }
+
+
+def _build_normalized_player_stats(player, enriched_player, performance_snapshot):
+    raw_stats = enriched_player.get("stats") if isinstance(enriched_player.get("stats"), dict) else {}
+
+    goals = _to_int_or_none(raw_stats.get("goals"))
+    if goals is None:
+        goals = _to_int_or_none(player.goals_season)
+
+    assists = _to_int_or_none(raw_stats.get("assists"))
+    if assists is None:
+        assists = _to_int_or_none(player.assists_season)
+
+    rating = _to_float_or_none(raw_stats.get("rating"))
+    if rating is None:
+        rating = _to_float_or_none(player.rating_season)
+
+    minutes = _to_int_or_none(raw_stats.get("minutes"))
+    if minutes is None:
+        minutes = _to_int_or_none(raw_stats.get("minutes_played"))
+    if minutes is None:
+        minutes = _to_int_or_none(player.minutes_played)
+
+    yellow_cards = performance_snapshot.get("yellow_cards")
+    red_cards = performance_snapshot.get("red_cards")
+
+    goal_involvements = None
+    if goals is not None or assists is not None:
+        goal_involvements = (goals or 0) + (assists or 0)
+
+    return {
+        "goals": goals,
+        "assists": assists,
+        "rating": rating,
+        "minutes": minutes,
+        "yellow_cards": yellow_cards,
+        "red_cards": red_cards,
+        "goal_involvements": goal_involvements,
+    }
+
+
+def _build_overall_score(stats, recent_form):
+    form_points = None
+    form_matches = len(recent_form) if recent_form else 0
+    if form_matches > 0:
+        point_map = {"W": 3, "D": 1, "L": 0}
+        form_points = sum(point_map.get(match.get("result"), 0) for match in recent_form)
+
+    components = [
+        {
+            "key": "rating",
+            "label": "Season Rating",
+            "weight": 35.0,
+            "raw_value": stats.get("rating"),
+            "normalized_value": _clamp01((stats.get("rating") or 0) / 10.0) if stats.get("rating") is not None else None,
+            "expression": "rating / 10",
+        },
+        {
+            "key": "goals",
+            "label": "Goal Output",
+            "weight": 20.0,
+            "raw_value": stats.get("goals"),
+            "normalized_value": _clamp01((stats.get("goals") or 0) / 20.0) if stats.get("goals") is not None else None,
+            "expression": "min(goals / 20, 1)",
+        },
+        {
+            "key": "assists",
+            "label": "Chance Creation",
+            "weight": 15.0,
+            "raw_value": stats.get("assists"),
+            "normalized_value": _clamp01((stats.get("assists") or 0) / 12.0) if stats.get("assists") is not None else None,
+            "expression": "min(assists / 12, 1)",
+        },
+        {
+            "key": "minutes",
+            "label": "Availability",
+            "weight": 15.0,
+            "raw_value": stats.get("minutes"),
+            "normalized_value": _clamp01((stats.get("minutes") or 0) / 3000.0) if stats.get("minutes") is not None else None,
+            "expression": "min(minutes / 3000, 1)",
+        },
+        {
+            "key": "discipline",
+            "label": "Discipline",
+            "weight": 5.0,
+            "raw_value": {
+                "yellow_cards": stats.get("yellow_cards"),
+                "red_cards": stats.get("red_cards"),
+            },
+            "normalized_value": _clamp01(
+                1 - (((stats.get("yellow_cards") or 0) * 0.03) + ((stats.get("red_cards") or 0) * 0.12))
+            )
+            if stats.get("yellow_cards") is not None and stats.get("red_cards") is not None
+            else None,
+            "expression": "max(0, 1 - (yellow_cards*0.03 + red_cards*0.12))",
+        },
+        {
+            "key": "form",
+            "label": "Recent Form",
+            "weight": 10.0,
+            "raw_value": form_points,
+            "normalized_value": _clamp01((form_points or 0) / (form_matches * 3.0)) if form_points is not None else None,
+            "expression": "recent_form_points / (matches * 3)",
+        },
+    ]
+
+    available_components = [component for component in components if component["normalized_value"] is not None]
+    available_weight = sum(component["weight"] for component in available_components)
+
+    score_value = 0.0
+    if available_weight > 0:
+        weighted_total = sum(component["normalized_value"] * component["weight"] for component in available_components)
+        score_value = round((weighted_total / available_weight) * 100, 1)
+
+    for component in components:
+        component["available"] = component["normalized_value"] is not None
+        if component["available"] and available_weight > 0:
+            component["contribution"] = round(
+                ((component["normalized_value"] * component["weight"]) / available_weight) * 100,
+                1,
+            )
+        else:
+            component["contribution"] = 0.0
+
+    return {
+        "value": score_value,
+        "available_weight": available_weight,
+        "formula": "Weighted normalized score: rating (35%), goals (20%), assists (15%), minutes (15%), discipline (5%), recent form (10%). Missing metrics are excluded and remaining weights are re-normalized to 100.",
+        "components": components,
+    }
+
+
+def _build_player_data_sources(player, enriched_player, performance_snapshot):
+    raw_stats = enriched_player.get("stats") if isinstance(enriched_player.get("stats"), dict) else {}
+    has_external_stats = bool(raw_stats.get("team_name") or raw_stats.get("league_name"))
+
+    has_db_stats = any(
+        metric is not None
+        for metric in [
+            player.goals_season,
+            player.assists_season,
+            player.rating_season,
+            player.minutes_played,
+        ]
+    )
+
+    stats_source = "api_football" if has_external_stats else "database" if has_db_stats else "missing"
+
+    photo_url = enriched_player.get("photo_url")
+    if photo_url and player.photo_url and photo_url == player.photo_url:
+        photo_source = "database"
+    elif photo_url and enriched_player.get("description"):
+        photo_source = "the_sports_db"
+    elif photo_url:
+        photo_source = "database"
+    else:
+        photo_source = "missing"
+
+    form_source = "match_history" if performance_snapshot.get("recent_form") else "missing"
+    discipline_source = "match_events" if performance_snapshot.get("matches_considered", 0) > 0 else "missing"
+
+    return {
+        "photo": photo_source,
+        "stats": stats_source,
+        "form": form_source,
+        "discipline": discipline_source,
+    }
+
+
+def _build_player_fallback_notes(data_sources, performance_snapshot):
+    notes = []
+
+    if data_sources.get("stats") != "api_football":
+        notes.append("Advanced API-Football metrics unavailable; using local stats fallback when present.")
+
+    if data_sources.get("photo") == "missing":
+        notes.append("Player photo is missing from the configured data providers.")
+
+    if data_sources.get("form") == "missing":
+        notes.append("Recent form could not be built from supported match history.")
+
+    if performance_snapshot.get("matches_considered", 0) == 0:
+        notes.append("Disciplinary stats are unavailable because no supported finished matches were found.")
+
+    return notes
+
+
+def _calculate_metric_delta(left_value, right_value, precision=2):
+    left_number = _to_float_or_none(left_value)
+    right_number = _to_float_or_none(right_value)
+
+    if left_number is None or right_number is None:
+        return None
+
+    return round(left_number - right_number, precision)
+
 @router.get("/leagues")
 def get_leagues(db: Session = Depends(get_db)):
     """Get all available leagues"""
@@ -691,12 +1081,27 @@ def get_players(
     team_id: int = Query(None, description="Filter by team ID"),
     position: str = Query(None, description="Filter by position"),
     search: str = Query(None, description="Search player name"),
+    supported_only: bool = Query(False, description="Restrict players to Top 5 leagues + UCL"),
     skip: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=100),
     db: Session = Depends(get_db)
 ):
     """Get all players with optional filtering"""
     query = db.query(Player)
+
+    if supported_only:
+        league_name_filters = [League.name.ilike(f"%{token}%") for token in SUPPORTED_LEAGUE_NAME_TOKENS]
+        query = (
+            query.join(Team, Player.team_id == Team.id)
+            .join(League, Team.league_id == League.id)
+            .filter(
+                or_(
+                    League.id.in_(list(SUPPORTED_COMPETITION_LEAGUE_IDS)),
+                    *league_name_filters,
+                )
+            )
+            .distinct()
+        )
     
     if team_id:
         query = query.filter(Player.team_id == team_id)
@@ -713,6 +1118,7 @@ def get_players(
     result = []
     for player in players:
         team = db.query(Team).filter(Team.id == player.team_id).first()
+        league = db.query(League).filter(League.id == team.league_id).first() if team else None
         
         result.append({
             "id": player.id,
@@ -723,8 +1129,15 @@ def get_players(
             "team": {
                 "id": team.id,
                 "name": team.name,
-                "logo_url": team.logo_url
-            } if team else None
+                "logo_url": team.logo_url,
+                "league_id": team.league_id,
+            } if team else None,
+            "league": {
+                "id": league.id,
+                "name": league.name,
+                "country": league.country,
+                "logo_url": league.logo_url,
+            } if league else None,
         })
     
     return result
@@ -966,14 +1379,31 @@ def get_head_to_head(team1_id: int, team2_id: int, db: Session = Depends(get_db)
 
 @router.get("/players/{player1_id}/vs/{player2_id}")
 def get_player_comparison(player1_id: int, player2_id: int, db: Session = Depends(get_db)):
-    """Compare two players side by side"""
+    """Compare two players side by side with normalized season stats and transparent scoring."""
     player1 = db.query(Player).filter(Player.id == player1_id).first()
     player2 = db.query(Player).filter(Player.id == player2_id).first()
-    
+
     if not player1 or not player2:
         raise HTTPException(status_code=404, detail="Player not found")
-    
-    # Prepare base data for enrichment
+
+    team_cache = {}
+    league_cache = {}
+
+    team1 = _get_cached_team(player1.team_id, db, team_cache)
+    team2 = _get_cached_team(player2.team_id, db, team_cache)
+
+    if not team1 or not team2:
+        raise HTTPException(status_code=404, detail="Could not resolve team for one or both players")
+
+    league1 = _get_league_for_team(team1, db, league_cache)
+    league2 = _get_league_for_team(team2, db, league_cache)
+
+    if not _is_supported_league(league1) or not _is_supported_league(league2):
+        raise HTTPException(
+            status_code=403,
+            detail="Player comparison is limited to Top 5 leagues + UCL players.",
+        )
+
     player1_dict = {
         "id": player1.id,
         "name": player1.name,
@@ -987,8 +1417,8 @@ def get_player_comparison(player1_id: int, player2_id: int, db: Session = Depend
             "goals": player1.goals_season,
             "assists": player1.assists_season,
             "rating": player1.rating_season,
-            "minutes": player1.minutes_played
-        }
+            "minutes": player1.minutes_played,
+        },
     }
 
     player2_dict = {
@@ -1004,32 +1434,95 @@ def get_player_comparison(player1_id: int, player2_id: int, db: Session = Depend
             "goals": player2.goals_season,
             "assists": player2.assists_season,
             "rating": player2.rating_season,
-            "minutes": player2.minutes_played
-        }
+            "minutes": player2.minutes_played,
+        },
     }
 
-    # Enrich with external data
     enriched_p1 = data_aggregator.enrich_player_data(player1_dict)
     enriched_p2 = data_aggregator.enrich_player_data(player2_dict)
-    
-    # Get team info for both players
-    team1 = db.query(Team).filter(Team.id == player1.team_id).first()
-    team2 = db.query(Team).filter(Team.id == player2.team_id).first()
-    
-    enriched_p1['team'] = {
+
+    enriched_p1["team"] = {
         "id": team1.id,
         "name": team1.name,
-        "logo_url": team1.logo_url
-    } if team1 else None
-
-    enriched_p2['team'] = {
+        "logo_url": team1.logo_url,
+    }
+    enriched_p2["team"] = {
         "id": team2.id,
         "name": team2.name,
-        "logo_url": team2.logo_url
-    } if team2 else None
-    
+        "logo_url": team2.logo_url,
+    }
+
+    enriched_p1["league"] = {
+        "id": league1.id,
+        "name": league1.name,
+        "country": league1.country,
+        "logo_url": league1.logo_url,
+    } if league1 else None
+    enriched_p2["league"] = {
+        "id": league2.id,
+        "name": league2.name,
+        "country": league2.country,
+        "logo_url": league2.logo_url,
+    } if league2 else None
+
+    performance_p1 = _build_player_performance_snapshot(player1, db, team_cache, league_cache)
+    performance_p2 = _build_player_performance_snapshot(player2, db, team_cache, league_cache)
+
+    stats_p1 = _build_normalized_player_stats(player1, enriched_p1, performance_p1)
+    stats_p2 = _build_normalized_player_stats(player2, enriched_p2, performance_p2)
+
+    score_p1 = _build_overall_score(stats_p1, performance_p1.get("recent_form", []))
+    score_p2 = _build_overall_score(stats_p2, performance_p2.get("recent_form", []))
+
+    sources_p1 = _build_player_data_sources(player1, enriched_p1, performance_p1)
+    sources_p2 = _build_player_data_sources(player2, enriched_p2, performance_p2)
+
+    fallback_notes_p1 = _build_player_fallback_notes(sources_p1, performance_p1)
+    fallback_notes_p2 = _build_player_fallback_notes(sources_p2, performance_p2)
+
+    enriched_p1["age"] = _calculate_age(enriched_p1.get("date_of_birth"))
+    enriched_p2["age"] = _calculate_age(enriched_p2.get("date_of_birth"))
+
+    enriched_p1["stats"] = stats_p1
+    enriched_p2["stats"] = stats_p2
+
+    enriched_p1["recent_form"] = performance_p1.get("recent_form", [])
+    enriched_p2["recent_form"] = performance_p2.get("recent_form", [])
+
+    enriched_p1["overall_score"] = score_p1
+    enriched_p2["overall_score"] = score_p2
+
+    enriched_p1["data_sources"] = sources_p1
+    enriched_p2["data_sources"] = sources_p2
+
+    enriched_p1["fallback_notes"] = fallback_notes_p1
+    enriched_p2["fallback_notes"] = fallback_notes_p2
+
+    score_winner_id = None
+    if score_p1.get("value", 0) > score_p2.get("value", 0):
+        score_winner_id = player1.id
+    elif score_p2.get("value", 0) > score_p1.get("value", 0):
+        score_winner_id = player2.id
+
     return {
         "player1": enriched_p1,
         "player2": enriched_p2,
-        "note": "Detailed performance stats provided by API-Football and TheSportsDB"
+        "comparison": {
+            "metric_deltas": {
+                "goals": _calculate_metric_delta(stats_p1.get("goals"), stats_p2.get("goals")),
+                "assists": _calculate_metric_delta(stats_p1.get("assists"), stats_p2.get("assists")),
+                "rating": _calculate_metric_delta(stats_p1.get("rating"), stats_p2.get("rating")),
+                "minutes": _calculate_metric_delta(stats_p1.get("minutes"), stats_p2.get("minutes")),
+                "goal_involvements": _calculate_metric_delta(
+                    stats_p1.get("goal_involvements"),
+                    stats_p2.get("goal_involvements"),
+                ),
+                "overall_score": _calculate_metric_delta(score_p1.get("value"), score_p2.get("value"), precision=1),
+            },
+            "score_winner_id": score_winner_id,
+            "scope": "Top 5 leagues + UEFA Champions League",
+            "fallback_active": bool(fallback_notes_p1 or fallback_notes_p2),
+        },
+        "score_formula": score_p1.get("formula"),
+        "note": "Stats combine local DB data, API-Football enrichment, and supported match-event history when available.",
     }
