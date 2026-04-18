@@ -1,6 +1,6 @@
 from pydantic import BaseModel
-from typing import List, Optional
-from datetime import datetime
+from typing import List, Optional, Literal, Dict
+from datetime import datetime, date
 
 class PlayerBase(BaseModel):
     name: str
@@ -255,3 +255,129 @@ class User(UserBase):
 class Token(BaseModel):
     access_token: str
     token_type: str
+
+
+class FantasyPlayerPoolItem(BaseModel):
+    player_id: int
+    player_name: str
+    position_key: str
+    team_id: int
+    team_name: str
+    team_logo: Optional[str] = None
+    league_id: Optional[int] = None
+    league_name: Optional[str] = None
+    price: float
+    goals_season: int = 0
+    assists_season: int = 0
+    rating_season: Optional[float] = None
+    minutes_played: int = 0
+
+
+class FantasyRulesResponse(BaseModel):
+    squad_size: int
+    budget_cap: float
+    position_limits: Dict[str, int]
+    starting_limits: Dict[str, Dict[str, int]]
+    free_transfers_per_matchday: int
+    extra_transfer_penalty: int
+    scoring_rules: Dict[str, int]
+
+
+class FantasySquadCreateRequest(BaseModel):
+    player_ids: List[int]
+
+
+class FantasySquadPlayerResponse(BaseModel):
+    player_id: int
+    player_name: str
+    position_key: str
+    team_id: int
+    team_name: str
+    team_logo: Optional[str] = None
+    purchase_price: float
+    is_active: bool
+
+
+class FantasySquadResponse(BaseModel):
+    squad_id: int
+    user_id: int
+    budget_cap: float
+    budget_spent: float
+    budget_remaining: float
+    created_at: datetime
+    updated_at: datetime
+    players: List[FantasySquadPlayerResponse]
+
+
+class FantasyMatchdayPickInput(BaseModel):
+    player_id: int
+    role: Literal["starter", "bench"]
+    bench_order: Optional[int] = None
+    is_captain: bool = False
+    is_vice_captain: bool = False
+
+
+class FantasyMatchdayPicksRequest(BaseModel):
+    picks: List[FantasyMatchdayPickInput]
+
+
+class FantasyMatchdayPickResponse(BaseModel):
+    player_id: int
+    player_name: str
+    position_key: str
+    role: str
+    bench_order: Optional[int] = None
+    is_captain: bool
+    is_vice_captain: bool
+
+
+class FantasyMatchdayPicksResponse(BaseModel):
+    matchday_key: date
+    is_locked: bool
+    picks: List[FantasyMatchdayPickResponse]
+
+
+class FantasyTransferItemRequest(BaseModel):
+    out_player_id: int
+    in_player_id: int
+
+
+class FantasyTransferRequest(BaseModel):
+    transfers: List[FantasyTransferItemRequest]
+
+
+class FantasyTransferResponse(BaseModel):
+    matchday_key: date
+    transfers_used: int
+    penalty_points: int
+    budget_spent: float
+    budget_remaining: float
+
+
+class FantasyPointsHistoryEntryResponse(BaseModel):
+    player_id: Optional[int] = None
+    player_name: Optional[str] = None
+    match_id: Optional[int] = None
+    points: int
+    reason: str
+
+
+class FantasyMatchdayPointsResponse(BaseModel):
+    matchday_key: date
+    total_points: int
+    transfer_penalty: int
+    captain_player_id: Optional[int] = None
+    entries: List[FantasyPointsHistoryEntryResponse]
+
+
+class FantasyLeaderboardEntry(BaseModel):
+    rank: int
+    username: str
+    total_points: int
+    matchday_points: int
+    squad_size: int
+
+
+class FantasyLeaderboardResponse(BaseModel):
+    matchday_key: date
+    entries: List[FantasyLeaderboardEntry]

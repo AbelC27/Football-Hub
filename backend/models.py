@@ -1,4 +1,15 @@
-from sqlalchemy import Column, Integer, String, Boolean, ForeignKey, DateTime, Float
+from sqlalchemy import (
+    Column,
+    Integer,
+    String,
+    Boolean,
+    ForeignKey,
+    DateTime,
+    Float,
+    Numeric,
+    Date,
+    UniqueConstraint,
+)
 from sqlalchemy.orm import relationship
 try:
     from backend.database import Base
@@ -137,3 +148,146 @@ class FantasySelection(Base):
     # Relationships
     user = relationship("User")
     team = relationship("Team")
+
+
+class FantasyPlayerSquad(Base):
+    __tablename__ = "fantasy_player_squads"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), unique=True, nullable=False, index=True)
+    budget_cap = Column(Numeric(10, 2), nullable=False, default=100.00)
+    budget_spent = Column(Numeric(10, 2), nullable=False, default=0.00)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow, nullable=False)
+    updated_at = Column(
+        DateTime,
+        default=datetime.datetime.utcnow,
+        onupdate=datetime.datetime.utcnow,
+        nullable=False,
+    )
+
+    user = relationship("User")
+    players = relationship(
+        "FantasySquadPlayer",
+        back_populates="squad",
+        cascade="all, delete-orphan",
+    )
+    picks = relationship(
+        "FantasyMatchdayPick",
+        back_populates="squad",
+        cascade="all, delete-orphan",
+    )
+    transfers = relationship(
+        "FantasyTransfer",
+        back_populates="squad",
+        cascade="all, delete-orphan",
+    )
+    points_history = relationship(
+        "FantasyPointsHistory",
+        back_populates="squad",
+        cascade="all, delete-orphan",
+    )
+    summaries = relationship(
+        "FantasyMatchdaySummary",
+        back_populates="squad",
+        cascade="all, delete-orphan",
+    )
+
+
+class FantasySquadPlayer(Base):
+    __tablename__ = "fantasy_squad_players"
+
+    id = Column(Integer, primary_key=True, index=True)
+    squad_id = Column(Integer, ForeignKey("fantasy_player_squads.id"), nullable=False, index=True)
+    player_id = Column(Integer, ForeignKey("players.id"), nullable=False, index=True)
+    position_key = Column(String(8), nullable=False)
+    purchase_price = Column(Numeric(10, 2), nullable=False)
+    is_active = Column(Boolean, nullable=False, default=True, index=True)
+    acquired_at = Column(DateTime, default=datetime.datetime.utcnow, nullable=False)
+    released_at = Column(DateTime, nullable=True)
+
+    squad = relationship("FantasyPlayerSquad", back_populates="players")
+    player = relationship("Player")
+
+
+class FantasyMatchdayPick(Base):
+    __tablename__ = "fantasy_matchday_picks"
+    __table_args__ = (
+        UniqueConstraint("squad_id", "matchday_key", "player_id", name="uq_fantasy_matchday_pick"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    squad_id = Column(Integer, ForeignKey("fantasy_player_squads.id"), nullable=False, index=True)
+    matchday_key = Column(Date, nullable=False, index=True)
+    player_id = Column(Integer, ForeignKey("players.id"), nullable=False, index=True)
+    role = Column(String(16), nullable=False, default="starter")
+    bench_order = Column(Integer, nullable=True)
+    is_captain = Column(Boolean, nullable=False, default=False)
+    is_vice_captain = Column(Boolean, nullable=False, default=False)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow, nullable=False)
+    updated_at = Column(
+        DateTime,
+        default=datetime.datetime.utcnow,
+        onupdate=datetime.datetime.utcnow,
+        nullable=False,
+    )
+
+    squad = relationship("FantasyPlayerSquad", back_populates="picks")
+    player = relationship("Player")
+
+
+class FantasyTransfer(Base):
+    __tablename__ = "fantasy_transfers"
+
+    id = Column(Integer, primary_key=True, index=True)
+    squad_id = Column(Integer, ForeignKey("fantasy_player_squads.id"), nullable=False, index=True)
+    matchday_key = Column(Date, nullable=False, index=True)
+    out_player_id = Column(Integer, ForeignKey("players.id"), nullable=False)
+    in_player_id = Column(Integer, ForeignKey("players.id"), nullable=False)
+    price_out = Column(Numeric(10, 2), nullable=False)
+    price_in = Column(Numeric(10, 2), nullable=False)
+    penalty_points = Column(Integer, nullable=False, default=0)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow, nullable=False)
+
+    squad = relationship("FantasyPlayerSquad", back_populates="transfers")
+    out_player = relationship("Player", foreign_keys=[out_player_id])
+    in_player = relationship("Player", foreign_keys=[in_player_id])
+
+
+class FantasyPointsHistory(Base):
+    __tablename__ = "fantasy_points_history"
+
+    id = Column(Integer, primary_key=True, index=True)
+    squad_id = Column(Integer, ForeignKey("fantasy_player_squads.id"), nullable=False, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    matchday_key = Column(Date, nullable=False, index=True)
+    player_id = Column(Integer, ForeignKey("players.id"), nullable=True)
+    match_id = Column(Integer, ForeignKey("matches.id"), nullable=True)
+    points = Column(Integer, nullable=False, default=0)
+    reason = Column(String(64), nullable=False)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow, nullable=False)
+
+    squad = relationship("FantasyPlayerSquad", back_populates="points_history")
+    user = relationship("User")
+    player = relationship("Player")
+    match = relationship("Match")
+
+
+class FantasyMatchdaySummary(Base):
+    __tablename__ = "fantasy_matchday_summaries"
+    __table_args__ = (
+        UniqueConstraint("squad_id", "matchday_key", name="uq_fantasy_matchday_summary"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    squad_id = Column(Integer, ForeignKey("fantasy_player_squads.id"), nullable=False, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    matchday_key = Column(Date, nullable=False, index=True)
+    total_points = Column(Integer, nullable=False, default=0)
+    captain_player_id = Column(Integer, ForeignKey("players.id"), nullable=True)
+    transfers_used = Column(Integer, nullable=False, default=0)
+    transfer_penalty = Column(Integer, nullable=False, default=0)
+    computed_at = Column(DateTime, default=datetime.datetime.utcnow, nullable=False)
+
+    squad = relationship("FantasyPlayerSquad", back_populates="summaries")
+    user = relationship("User")
+    captain = relationship("Player")
