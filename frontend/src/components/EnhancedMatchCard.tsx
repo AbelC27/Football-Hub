@@ -45,8 +45,8 @@ export const EnhancedMatchCard: React.FC<EnhancedMatchCardProps> = ({ match }) =
     });
 
     // Determine winner for finished matches
-    const homeWin = isFinished && match.home_score !== null && match.away_score !== null && match.home_score > match.away_score;
-    const awayWin = isFinished && match.home_score !== null && match.away_score !== null && match.away_score > match.home_score;
+    const homeWin = isFinished && match.home_score !== null && match.away_score !== null && match.home_score! > match.away_score!;
+    const awayWin = isFinished && match.home_score !== null && match.away_score !== null && match.away_score! > match.home_score!;
 
     return (
         <Link href={`/match/${match.id}`} className="block group">

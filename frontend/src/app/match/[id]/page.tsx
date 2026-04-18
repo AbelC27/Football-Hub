@@ -1,199 +1,189 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
 import { useParams } from 'next/navigation';
-import { Match } from '@/lib/api';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { PredictionBadge } from '@/components/PredictionBadge';
-import { MatchTimeline } from '@/components/MatchTimeline';
-import { MatchStats } from '@/components/MatchStats';
-import { ArrowLeft, Calendar, MapPin, Trophy } from 'lucide-react';
-import Link from 'next/link';
-import { motion } from 'framer-motion';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { toast } from 'sonner';
+import { AlertTriangle, RefreshCw } from 'lucide-react';
+import { getMatchExperience, MatchExperience } from '@/lib/api';
 import { useWebSocket } from '@/hooks/useWebSocket';
+import { MatchExperienceView } from '@/components/MatchExperienceView';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Skeleton } from '@/components/ui/skeleton';
 
-const API_BASE_URL = "http://localhost:8000/api/v1";
-const WS_URL = "ws://localhost:8000/ws/live";
+const WS_URL = 'ws://localhost:8000/ws/live';
 
-async function getMatchDetails(id: string): Promise<Match> {
-    const res = await fetch(`${API_BASE_URL}/match/${id}/details`);
-    if (!res.ok) throw new Error("Failed to fetch match details");
-    return res.json();
-}
-
-export default function MatchDetails() {
-    const params = useParams();
-    const [match, setMatch] = useState<Match | null>(null);
-    const [loading, setLoading] = useState(true);
-    const lastMessage = useWebSocket(WS_URL);
-
-    useEffect(() => {
-        if (params.id) {
-            getMatchDetails(params.id as string)
-                .then(setMatch)
-                .catch(console.error)
-                .finally(() => setLoading(false));
-        }
-    }, [params.id]);
-
-    useEffect(() => {
-        if (lastMessage && lastMessage.type === 'match_update' && match && lastMessage.data.match_id === match.id) {
-            setMatch(prev => prev ? { ...prev, home_score: lastMessage.data.home_score, away_score: lastMessage.data.away_score } : null);
-        }
-    }, [lastMessage, match]);
-
-    if (loading) return <div className="p-8 text-center">Loading match details...</div>;
-    if (!match) return <div className="p-8 text-center">Match not found</div>;
-
+function MatchPageLoadingState() {
     return (
-        <main className="min-h-screen p-4 md:p-8 bg-gray-50 dark:bg-gray-900">
-            <div className="max-w-4xl mx-auto">
-                <Link href="/" className="inline-flex items-center text-blue-600 hover:underline mb-6">
-                    <ArrowLeft className="w-4 h-4 mr-2" /> Back to Matches
-                </Link>
-
-                <motion.div
-                    initial={{ opacity: 0, y: 20 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    transition={{ duration: 0.5 }}
-                >
-                    <Card className="mb-8 overflow-hidden border-t-4 border-t-blue-600">
-                        <CardHeader className="bg-white dark:bg-gray-800 pb-8">
-                            <div className="flex flex-col md:flex-row justify-between items-center text-sm text-gray-500 mb-6">
-                                <div className="flex items-center mb-2 md:mb-0">
-                                    <Calendar className="w-4 h-4 mr-2" />
-                                    {new Date(match.start_time).toLocaleString()}
-                                </div>
-                                <div className="flex items-center">
-                                    <MapPin className="w-4 h-4 mr-2" />
-                                    {match.home_team_stadium || 'Stadium Info'}
-                                </div>
-                            </div>
-
-                            <div className="flex justify-between items-center w-full">
-                                <div className="flex flex-col items-center flex-1">
-                                    {match.home_team_logo ? (
-                                        <img
-                                            src={match.home_team_logo}
-                                            alt={match.home_team_name || 'Home'}
-                                            className="w-24 h-24 object-contain mb-4"
-                                            onError={(e) => {
-                                                (e.target as HTMLImageElement).style.display = 'none';
-                                            }}
-                                        />
-                                    ) : (
-                                        <div className="w-24 h-24 bg-gray-200 rounded-full mb-4 flex items-center justify-center text-2xl font-bold text-gray-400">
-                                            H
-                                        </div>
-                                    )}
-                                    <h2 className="text-xl md:text-2xl font-bold text-center">
-                                        {match.home_team_name || `Team ${match.home_team_id}`}
-                                    </h2>
-                                </div>
-
-                                <div className="flex flex-col items-center px-4 md:px-12">
-                                    <div className="text-4xl md:text-6xl font-black text-gray-900 dark:text-white mb-2">
-                                        {match.home_score ?? '-'} : {match.away_score ?? '-'}
-                                    </div>
-                                    <div className={`px-3 py-1 rounded-full text-sm font-bold ${match.status === 'LIVE' ? 'bg-red-100 text-red-600 animate-pulse' : 'bg-gray-100 text-gray-600'}`}>
-                                        {match.status}
-                                    </div>
-                                </div>
-
-                                <div className="flex flex-col items-center flex-1">
-                                    {match.away_team_logo ? (
-                                        <img
-                                            src={match.away_team_logo}
-                                            alt={match.away_team_name || 'Away'}
-                                            className="w-24 h-24 object-contain mb-4"
-                                            onError={(e) => {
-                                                (e.target as HTMLImageElement).style.display = 'none';
-                                            }}
-                                        />
-                                    ) : (
-                                        <div className="w-24 h-24 bg-gray-200 rounded-full mb-4 flex items-center justify-center text-2xl font-bold text-gray-400">
-                                            A
-                                        </div>
-                                    )}
-                                    <h2 className="text-xl md:text-2xl font-bold text-center">
-                                        {match.away_team_name || `Team ${match.away_team_id}`}
-                                    </h2>
-                                </div>
-                            </div>
-                        </CardHeader>
-                    </Card>
-
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
-                        <Card>
-                            <CardHeader>
-                                <CardTitle className="flex items-center">
-                                    <Trophy className="w-5 h-5 mr-2 text-yellow-500" />
-                                    AI Prediction
-                                </CardTitle>
-                            </CardHeader>
-                            <CardContent>
-                                {match.prediction ? (
-                                    <PredictionBadge
-                                        homeProb={match.prediction.home_win_prob}
-                                        drawProb={match.prediction.draw_prob}
-                                        awayProb={match.prediction.away_win_prob}
-                                    />
-                                ) : (
-                                    <div className="text-center text-gray-500 py-4">
-                                        No prediction available for this match.
-                                    </div>
-                                )}
-                            </CardContent>
-                        </Card>
-
-                        {/* Stats Section - Only show if we have stats logic (currently placeholder or hidden) */}
-                        {/* Since free API doesn't have stats, we'll show a message or hide it. 
-                            For now, keeping the component but it handles its own empty state. 
-                            Let's wrap it to be cleaner. */}
-                        <MatchStats matchId={match.id} />
-                    </div>
-
-                    <Card className="mb-6">
-                        <CardContent className="p-6">
-                            <MatchTimeline matchId={match.id} />
+        <main className="min-h-screen bg-[radial-gradient(circle_at_top,_#eef8ff_0%,_#f6f7fb_42%,_#f1f1f5_100%)] px-4 py-6 dark:bg-[radial-gradient(circle_at_top,_#1a2433_0%,_#0f1115_42%,_#0b0c0f_100%)] md:px-8 md:py-10">
+            <div className="mx-auto max-w-6xl space-y-5">
+                <Skeleton className="h-5 w-44" />
+                <Card>
+                    <CardContent className="space-y-4 p-6 md:p-8">
+                        <Skeleton className="h-6 w-48" />
+                        <Skeleton className="h-14 w-56" />
+                        <Skeleton className="h-24 w-full" />
+                    </CardContent>
+                </Card>
+                <div className="grid gap-4 md:grid-cols-2">
+                    <Card>
+                        <CardContent className="space-y-3 p-6">
+                            <Skeleton className="h-5 w-32" />
+                            <Skeleton className="h-16 w-full" />
                         </CardContent>
                     </Card>
-
-                    {(match.home_players && match.home_players.length > 0) && (
-                        <Card>
-                            <CardHeader>
-                                <CardTitle>Team Squads</CardTitle>
-                            </CardHeader>
-                            <CardContent>
-                                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                                    <div>
-                                        <h3 className="font-bold text-lg mb-3">{match.home_team_name}</h3>
-                                        <div className="space-y-2 max-h-96 overflow-y-auto pr-2">
-                                            {match.home_players.map((player, idx) => (
-                                                <div key={idx} className="flex justify-between items-center p-2 bg-gray-50 dark:bg-gray-800 rounded">
-                                                    <span className="font-medium">{player.name}</span>
-                                                    <span className="text-sm text-gray-500">{player.position}</span>
-                                                </div>
-                                            ))}
-                                        </div>
-                                    </div>
-                                    <div>
-                                        <h3 className="font-bold text-lg mb-3">{match.away_team_name}</h3>
-                                        <div className="space-y-2 max-h-96 overflow-y-auto pr-2">
-                                            {match.away_players?.map((player, idx) => (
-                                                <div key={idx} className="flex justify-between items-center p-2 bg-gray-50 dark:bg-gray-800 rounded">
-                                                    <span className="font-medium">{player.name}</span>
-                                                    <span className="text-sm text-gray-500">{player.position}</span>
-                                                </div>
-                                            ))}
-                                        </div>
-                                    </div>
-                                </div>
-                            </CardContent>
-                        </Card>
-                    )}
-                </motion.div>
+                    <Card>
+                        <CardContent className="space-y-3 p-6">
+                            <Skeleton className="h-5 w-32" />
+                            <Skeleton className="h-16 w-full" />
+                        </CardContent>
+                    </Card>
+                </div>
             </div>
         </main>
     );
+}
+
+function MatchPageErrorState({
+    message,
+    onRetry,
+}: {
+    message: string;
+    onRetry: () => void;
+}) {
+    return (
+        <main className="min-h-screen bg-[radial-gradient(circle_at_top,_#eef8ff_0%,_#f6f7fb_42%,_#f1f1f5_100%)] px-4 py-6 dark:bg-[radial-gradient(circle_at_top,_#1a2433_0%,_#0f1115_42%,_#0b0c0f_100%)] md:px-8 md:py-10">
+            <div className="mx-auto max-w-2xl">
+                <Card>
+                    <CardHeader>
+                        <CardTitle className="flex items-center gap-2 text-red-600 dark:text-red-400">
+                            <AlertTriangle className="h-5 w-5" />
+                            Match Experience Unavailable
+                        </CardTitle>
+                    </CardHeader>
+                    <CardContent className="space-y-4 text-sm text-neutral-600 dark:text-neutral-300">
+                        <p>{message}</p>
+                        <button
+                            onClick={onRetry}
+                            className="inline-flex items-center gap-2 rounded-md bg-neutral-900 px-4 py-2 text-sm font-medium text-white transition hover:bg-neutral-700 dark:bg-neutral-100 dark:text-neutral-900 dark:hover:bg-neutral-300"
+                        >
+                            <RefreshCw className="h-4 w-4" />
+                            Retry
+                        </button>
+                    </CardContent>
+                </Card>
+            </div>
+        </main>
+    );
+}
+
+export default function MatchDetailsPage() {
+    const params = useParams();
+    const queryClient = useQueryClient();
+    const lastMessage = useWebSocket(WS_URL);
+
+    const successToastShown = useRef(false);
+    const lastErrorToast = useRef<string | null>(null);
+    const lastPartialToastKey = useRef('');
+
+    const matchId = useMemo(() => {
+        const rawId = Array.isArray(params.id) ? params.id[0] : params.id;
+        const parsed = Number(rawId);
+
+        return Number.isFinite(parsed) ? parsed : null;
+    }, [params.id]);
+
+    const query = useQuery({
+        queryKey: ['match-experience', matchId],
+        queryFn: () => getMatchExperience(matchId as number),
+        enabled: typeof matchId === 'number' && matchId > 0,
+        staleTime: 20_000,
+        refetchInterval: (currentQuery) => {
+            const status = currentQuery.state.data?.header.status?.toUpperCase();
+            return status && ['LIVE', 'HT', 'ET', 'P'].includes(status) ? 15_000 : false;
+        },
+    });
+
+    useEffect(() => {
+        if (query.isSuccess && !successToastShown.current) {
+            successToastShown.current = true;
+            toast.success('Match data loaded successfully.');
+        }
+    }, [query.isSuccess]);
+
+    useEffect(() => {
+        if (!query.isError) return;
+
+        const message = query.error instanceof Error ? query.error.message : 'Failed to load match data.';
+        if (lastErrorToast.current === message) return;
+
+        lastErrorToast.current = message;
+        toast.error(message);
+    }, [query.error, query.isError]);
+
+    useEffect(() => {
+        if (!query.data || query.data.partial_failures.length === 0) return;
+
+        const partialKey = query.data.partial_failures.map((failure) => `${failure.section}:${failure.message}`).join('|');
+        if (lastPartialToastKey.current === partialKey) return;
+
+        lastPartialToastKey.current = partialKey;
+        toast.warning('Some match sections are temporarily unavailable.');
+    }, [query.data]);
+
+    useEffect(() => {
+        if (!matchId || !lastMessage || lastMessage.type !== 'match_update') return;
+        if (Number(lastMessage?.data?.match_id) !== matchId) return;
+
+        queryClient.setQueryData<MatchExperience>(['match-experience', matchId], (current) => {
+            if (!current) return current;
+
+            return {
+                ...current,
+                header: {
+                    ...current.header,
+                    status: lastMessage.data.status || current.header.status,
+                    score: {
+                        home:
+                            typeof lastMessage.data.home_score === 'number'
+                                ? lastMessage.data.home_score
+                                : current.header.score.home,
+                        away:
+                            typeof lastMessage.data.away_score === 'number'
+                                ? lastMessage.data.away_score
+                                : current.header.score.away,
+                    },
+                },
+            };
+        });
+    }, [lastMessage, matchId, queryClient]);
+
+    if (!matchId || matchId <= 0) {
+        return (
+            <MatchPageErrorState
+                message="The match id is invalid. Please open this page from a valid match link."
+                onRetry={() => query.refetch()}
+            />
+        );
+    }
+
+    if (query.isPending) {
+        return <MatchPageLoadingState />;
+    }
+
+    if (query.isError) {
+        const errorMessage = query.error instanceof Error ? query.error.message : 'Failed to load match data.';
+        return <MatchPageErrorState message={errorMessage} onRetry={() => query.refetch()} />;
+    }
+
+    if (!query.data) {
+        return (
+            <MatchPageErrorState
+                message="No match payload was returned by the server."
+                onRetry={() => query.refetch()}
+            />
+        );
+    }
+
+    return <MatchExperienceView data={query.data} />;
 }

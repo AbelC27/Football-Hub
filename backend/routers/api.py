@@ -1,20 +1,194 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
+from sqlalchemy import or_
 from typing import List
+import re
 try:
     from backend.database import get_db
     from backend.models import Match, League, Team, Prediction, Player, MatchEvent, MatchStatistics
-    from backend.schemas import Match as MatchSchema, Prediction as PredictionSchema
+    from backend.schemas import Match as MatchSchema, Prediction as PredictionSchema, MatchExperience as MatchExperienceSchema
 except ImportError:
     from database import get_db
     from models import Match, League, Team, Prediction, Player, MatchEvent, MatchStatistics
-    from schemas import Match as MatchSchema, Prediction as PredictionSchema
+    from schemas import Match as MatchSchema, Prediction as PredictionSchema, MatchExperience as MatchExperienceSchema
 import datetime
 from services.data_aggregator import data_aggregator
 from services.thesportsdb_service import thesportsdb
 from services.api_football_service import api_football
 
 router = APIRouter(prefix="/api/v1", tags=["api"])
+
+SUPPORTED_COMPETITION_LEAGUE_IDS = {
+    39,   # Premier League (API-Football)
+    140,  # La Liga (API-Football)
+    78,   # Bundesliga (API-Football)
+    135,  # Serie A (API-Football)
+    61,   # Ligue 1 (API-Football)
+    4480, # Champions League (TheSportsDB)
+    2021, # Premier League (football-data.org)
+    2014, # La Liga (football-data.org)
+    2002, # Bundesliga (football-data.org)
+    2019, # Serie A (football-data.org)
+    2015, # Ligue 1 (football-data.org)
+    2001, # Champions League (football-data.org)
+}
+
+SUPPORTED_LEAGUE_NAME_TOKENS = (
+    "premier league",
+    "la liga",
+    "bundesliga",
+    "serie a",
+    "ligue 1",
+    "champions league",
+)
+
+FINISHED_MATCH_STATUSES = {"FT", "AET", "PEN"}
+ASSIST_PATTERN = re.compile(r"assist(?:ed)?\s*[:\-]?\s*([A-Za-z0-9 .'-]+)", re.IGNORECASE)
+
+
+def _normalize_text(value):
+    return value.strip().lower() if isinstance(value, str) else ""
+
+
+def _is_supported_league(league):
+    if not league:
+        return False
+
+    if league.id in SUPPORTED_COMPETITION_LEAGUE_IDS:
+        return True
+
+    league_name = _normalize_text(league.name)
+    return any(token in league_name for token in SUPPORTED_LEAGUE_NAME_TOKENS)
+
+
+def _normalize_event_type(raw_type):
+    normalized = _normalize_text(raw_type)
+
+    if "goal" in normalized:
+        return "goal"
+    if "assist" in normalized:
+        return "assist"
+    if "card" in normalized:
+        return "card"
+    if "subst" in normalized or "substit" in normalized:
+        return "substitution"
+
+    return "other"
+
+
+def _extract_assist_name(detail):
+    if not detail:
+        return None
+
+    match = ASSIST_PATTERN.search(detail)
+    if match:
+        return match.group(1).strip()
+
+    return None
+
+
+def _serialize_player(player):
+    return {
+        "id": player.id,
+        "name": player.name,
+        "position": player.position or "Unknown",
+        "photo_url": player.photo_url,
+    }
+
+
+def _get_league_for_team(team, db: Session, league_cache):
+    if not team or not team.league_id:
+        return None
+
+    if team.league_id not in league_cache:
+        league_cache[team.league_id] = db.query(League).filter(League.id == team.league_id).first()
+
+    return league_cache[team.league_id]
+
+
+def _get_cached_team(team_id, db: Session, team_cache):
+    if team_id not in team_cache:
+        team_cache[team_id] = db.query(Team).filter(Team.id == team_id).first()
+
+    return team_cache[team_id]
+
+
+def _resolve_competition(home_league, away_league):
+    if home_league and away_league and home_league.id == away_league.id:
+        return home_league
+
+    for league in [home_league, away_league]:
+        if league and "champions league" in _normalize_text(league.name):
+            return league
+
+    for league in [home_league, away_league]:
+        if _is_supported_league(league):
+            return league
+
+    return None
+
+
+def _build_recent_form(team_id, current_match_id, db: Session, team_cache, league_cache):
+    recent_matches = (
+        db.query(Match)
+        .filter(
+            Match.id != current_match_id,
+            Match.status.in_(list(FINISHED_MATCH_STATUSES)),
+            or_(Match.home_team_id == team_id, Match.away_team_id == team_id),
+        )
+        .order_by(Match.start_time.desc())
+        .limit(30)
+        .all()
+    )
+
+    results = []
+
+    for past_match in recent_matches:
+        home_team = _get_cached_team(past_match.home_team_id, db, team_cache)
+        away_team = _get_cached_team(past_match.away_team_id, db, team_cache)
+
+        home_league = _get_league_for_team(home_team, db, league_cache)
+        away_league = _get_league_for_team(away_team, db, league_cache)
+
+        if not (_is_supported_league(home_league) or _is_supported_league(away_league)):
+            continue
+
+        is_home = past_match.home_team_id == team_id
+        opponent_team = away_team if is_home else home_team
+
+        team_score = past_match.home_score if is_home else past_match.away_score
+        opponent_score = past_match.away_score if is_home else past_match.home_score
+
+        result = None
+        if team_score is not None and opponent_score is not None:
+            if team_score > opponent_score:
+                result = "W"
+            elif team_score < opponent_score:
+                result = "L"
+            else:
+                result = "D"
+
+        competition = _resolve_competition(home_league, away_league)
+
+        results.append(
+            {
+                "match_id": past_match.id,
+                "start_time": past_match.start_time,
+                "status": past_match.status,
+                "opponent_name": opponent_team.name if opponent_team else "Unknown",
+                "opponent_logo": opponent_team.logo_url if opponent_team else None,
+                "is_home": is_home,
+                "team_score": team_score,
+                "opponent_score": opponent_score,
+                "result": result,
+                "competition_name": competition.name if competition else None,
+            }
+        )
+
+        if len(results) == 5:
+            break
+
+    return results
 
 @router.get("/leagues")
 def get_leagues(db: Session = Depends(get_db)):
@@ -24,7 +198,20 @@ def get_leagues(db: Session = Depends(get_db)):
 
 @router.get("/live-matches")
 def get_live_matches(db: Session = Depends(get_db)):
-    matches = db.query(Match).filter(Match.status.in_(['LIVE', 'NS', 'FT'])).all()
+    now_utc = datetime.datetime.utcnow()
+    window_start = now_utc - datetime.timedelta(days=7)
+    window_end = now_utc + datetime.timedelta(days=14)
+
+    statuses = ['LIVE', 'HT', 'ET', 'P', 'NS', 'TBD', 'PST', 'FT', 'AET', 'PEN']
+
+    matches = (
+        db.query(Match)
+        .filter(Match.status.in_(statuses))
+        .filter(Match.start_time >= window_start)
+        .filter(Match.start_time <= window_end)
+        .order_by(Match.start_time.asc())
+        .all()
+    )
     
     # Enrich matches with team data
     enriched_matches = []
@@ -83,6 +270,191 @@ def get_match_details(match_id: int, db: Session = Depends(get_db)):
         "prediction": match.prediction
     }
 
+
+@router.get("/match/{match_id}/experience", response_model=MatchExperienceSchema)
+def get_match_experience(match_id: int, db: Session = Depends(get_db)):
+    match = db.query(Match).filter(Match.id == match_id).first()
+    if not match:
+        raise HTTPException(status_code=404, detail="Match not found")
+
+    partial_failures = []
+    team_cache = {}
+    league_cache = {}
+
+    home_team = _get_cached_team(match.home_team_id, db, team_cache)
+    away_team = _get_cached_team(match.away_team_id, db, team_cache)
+
+    if not home_team or not away_team:
+        raise HTTPException(status_code=404, detail="Match teams not found")
+
+    home_league = _get_league_for_team(home_team, db, league_cache)
+    away_league = _get_league_for_team(away_team, db, league_cache)
+
+    if not (_is_supported_league(home_league) or _is_supported_league(away_league)):
+        raise HTTPException(
+            status_code=403,
+            detail="Match is outside the supported competition scope (Top 5 + UCL)",
+        )
+
+    competition = _resolve_competition(home_league, away_league)
+
+    home_squad = []
+    away_squad = []
+    try:
+        home_players = (
+            db.query(Player)
+            .filter(Player.team_id == match.home_team_id)
+            .order_by(Player.position.asc(), Player.name.asc())
+            .all()
+        )
+        away_players = (
+            db.query(Player)
+            .filter(Player.team_id == match.away_team_id)
+            .order_by(Player.position.asc(), Player.name.asc())
+            .all()
+        )
+
+        home_squad = [_serialize_player(player) for player in home_players]
+        away_squad = [_serialize_player(player) for player in away_players]
+    except Exception:
+        partial_failures.append(
+            {
+                "section": "squads",
+                "message": "Could not load full squads for both teams.",
+            }
+        )
+
+    events = []
+    substitutions = []
+    try:
+        event_rows = (
+            db.query(MatchEvent)
+            .filter(MatchEvent.match_id == match_id)
+            .order_by(MatchEvent.minute.asc(), MatchEvent.id.asc())
+            .all()
+        )
+
+        for event in event_rows:
+            event_kind = _normalize_event_type(event.event_type)
+            detail = event.detail or None
+            assist_player = _extract_assist_name(detail)
+
+            if event_kind in {"goal", "assist", "card"}:
+                events.append(
+                    {
+                        "id": event.id,
+                        "minute": event.minute,
+                        "event_type": event_kind,
+                        "team_id": event.team_id,
+                        "player_name": event.player_name,
+                        "assist_player": assist_player,
+                        "card_type": detail if event_kind == "card" else None,
+                        "detail": detail,
+                    }
+                )
+
+            if event_kind == "substitution":
+                substitutions.append(
+                    {
+                        "id": event.id,
+                        "minute": event.minute,
+                        "team_id": event.team_id,
+                        "player_name": event.player_name,
+                        "detail": detail,
+                    }
+                )
+    except Exception:
+        partial_failures.append(
+            {
+                "section": "events",
+                "message": "Could not load timeline events for this match.",
+            }
+        )
+
+    prediction_payload = None
+    try:
+        prediction = db.query(Prediction).filter(Prediction.match_id == match_id).first()
+        if prediction:
+            prediction_payload = {
+                "id": prediction.id,
+                "match_id": prediction.match_id,
+                "home_win_prob": prediction.home_win_prob,
+                "draw_prob": prediction.draw_prob,
+                "away_win_prob": prediction.away_win_prob,
+                "confidence_score": prediction.confidence_score,
+            }
+    except Exception:
+        partial_failures.append(
+            {
+                "section": "prediction",
+                "message": "Could not load AI prediction for this match.",
+            }
+        )
+
+    home_last_five = []
+    away_last_five = []
+    try:
+        home_last_five = _build_recent_form(match.home_team_id, match.id, db, team_cache, league_cache)
+        away_last_five = _build_recent_form(match.away_team_id, match.id, db, team_cache, league_cache)
+    except Exception:
+        partial_failures.append(
+            {
+                "section": "form",
+                "message": "Could not load recent form for one or both teams.",
+            }
+        )
+
+    return {
+        "header": {
+            "match_id": match.id,
+            "start_time": match.start_time,
+            "status": match.status,
+            "score": {
+                "home": match.home_score,
+                "away": match.away_score,
+            },
+            "competition": {
+                "id": competition.id,
+                "name": competition.name,
+                "country": competition.country,
+                "logo_url": competition.logo_url,
+            }
+            if competition
+            else None,
+        },
+        "teams": {
+            "home": {
+                "id": home_team.id,
+                "name": home_team.name,
+                "logo_url": home_team.logo_url,
+                "stadium": home_team.stadium,
+            },
+            "away": {
+                "id": away_team.id,
+                "name": away_team.name,
+                "logo_url": away_team.logo_url,
+                "stadium": away_team.stadium,
+            },
+        },
+        "prediction": prediction_payload,
+        "events": events,
+        "lineups": {
+            "home_starting_xi": home_squad[:11],
+            "away_starting_xi": away_squad[:11],
+            "substitutions": substitutions,
+            "source": "estimated_from_team_squads_and_substitution_events",
+        },
+        "form": {
+            "home_last_five": home_last_five,
+            "away_last_five": away_last_five,
+        },
+        "squads": {
+            "home": home_squad,
+            "away": away_squad,
+        },
+        "partial_failures": partial_failures,
+    }
+
 @router.get("/match/{match_id}/prediction", response_model=PredictionSchema)
 def get_match_prediction(match_id: int, db: Session = Depends(get_db)):
     prediction = db.query(Prediction).filter(Prediction.match_id == match_id).first()
@@ -106,37 +478,116 @@ def get_match_statistics(match_id: int, db: Session = Depends(get_db)):
 
 @router.get("/league/{league_id}/standings")
 def get_league_standings(league_id: int, db: Session = Depends(get_db)):
-    """Get standings for a league"""
-    try:
-        from backend.models import Standing
-    except ImportError:
-        from models import Standing
-        
-    standings = db.query(Standing).filter(Standing.league_id == league_id).order_by(Standing.rank).all()
-    
-    # Enrich with team data
-    enriched_standings = []
-    for standing in standings:
-        team = db.query(Team).filter(Team.id == standing.team_id).first()
-        
-        standing_dict = {
-            "rank": standing.rank,
-            "team_id": standing.team_id,
-            "team_name": team.name if team else f"Team {standing.team_id}",
-            "team_logo": team.logo_url if team else None,
-            "points": standing.points,
-            "played": standing.played,
-            "won": standing.won,
-            "drawn": standing.drawn,
-            "lost": standing.lost,
-            "goals_for": standing.goals_for,
-            "goals_against": standing.goals_against,
-            "goal_difference": standing.goal_difference,
-            "form": standing.form
+    """Compute standings from finished league matches for fresher results."""
+    teams = db.query(Team).filter(Team.league_id == league_id).all()
+    if not teams:
+        return []
+
+    team_map = {team.id: team for team in teams}
+    team_ids = list(team_map.keys())
+
+    stats = {
+        team_id: {
+            "played": 0,
+            "won": 0,
+            "drawn": 0,
+            "lost": 0,
+            "goals_for": 0,
+            "goals_against": 0,
+            "form": []
         }
-        enriched_standings.append(standing_dict)
-        
-    return enriched_standings
+        for team_id in team_ids
+    }
+
+    matches = (
+        db.query(Match)
+        .filter(
+            Match.home_team_id.in_(team_ids),
+            Match.away_team_id.in_(team_ids),
+            Match.status == "FT",
+            Match.home_score.isnot(None),
+            Match.away_score.isnot(None)
+        )
+        .order_by(Match.start_time.asc())
+        .all()
+    )
+
+    for match in matches:
+        home_id = match.home_team_id
+        away_id = match.away_team_id
+        home_goals = match.home_score
+        away_goals = match.away_score
+
+        home_stats = stats[home_id]
+        away_stats = stats[away_id]
+
+        home_stats["played"] += 1
+        away_stats["played"] += 1
+        home_stats["goals_for"] += home_goals
+        home_stats["goals_against"] += away_goals
+        away_stats["goals_for"] += away_goals
+        away_stats["goals_against"] += home_goals
+
+        if home_goals > away_goals:
+            home_stats["won"] += 1
+            away_stats["lost"] += 1
+            home_result, away_result = "W", "L"
+        elif home_goals < away_goals:
+            away_stats["won"] += 1
+            home_stats["lost"] += 1
+            home_result, away_result = "L", "W"
+        else:
+            home_stats["drawn"] += 1
+            away_stats["drawn"] += 1
+            home_result, away_result = "D", "D"
+
+        home_stats["form"].append(home_result)
+        away_stats["form"].append(away_result)
+
+        if len(home_stats["form"]) > 5:
+            home_stats["form"] = home_stats["form"][-5:]
+        if len(away_stats["form"]) > 5:
+            away_stats["form"] = away_stats["form"][-5:]
+
+    standings = []
+    for team_id in team_ids:
+        team_stats = stats[team_id]
+        team = team_map[team_id]
+
+        points = team_stats["won"] * 3 + team_stats["drawn"]
+        goal_difference = team_stats["goals_for"] - team_stats["goals_against"]
+
+        standings.append(
+            {
+                "rank": 0,
+                "team_id": team_id,
+                "team_name": team.name,
+                "team_logo": team.logo_url,
+                "points": points,
+                "played": team_stats["played"],
+                "won": team_stats["won"],
+                "drawn": team_stats["drawn"],
+                "lost": team_stats["lost"],
+                "goals_for": team_stats["goals_for"],
+                "goals_against": team_stats["goals_against"],
+                "goal_difference": goal_difference,
+                "form": "".join(team_stats["form"])
+            }
+        )
+
+    standings.sort(
+        key=lambda row: (
+            -row["points"],
+            -row["goal_difference"],
+            -row["goals_for"],
+            row["team_name"]
+        )
+    )
+
+    for idx, row in enumerate(standings, start=1):
+        row["rank"] = idx
+
+    return standings
 
 @router.get("/teams")
 def get_teams(

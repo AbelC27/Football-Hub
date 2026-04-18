@@ -79,6 +79,110 @@ class MatchStatistics(BaseModel):
     class Config:
         from_attributes = True
 
+
+class MatchExperienceCompetition(BaseModel):
+    id: int
+    name: str
+    country: Optional[str] = None
+    logo_url: Optional[str] = None
+
+
+class MatchExperienceScore(BaseModel):
+    home: Optional[int] = None
+    away: Optional[int] = None
+
+
+class MatchExperienceHeader(BaseModel):
+    match_id: int
+    start_time: datetime
+    status: str
+    score: MatchExperienceScore
+    competition: Optional[MatchExperienceCompetition] = None
+
+
+class MatchExperienceTeam(BaseModel):
+    id: int
+    name: str
+    logo_url: Optional[str] = None
+    stadium: Optional[str] = None
+
+
+class MatchExperiencePlayer(BaseModel):
+    id: int
+    name: str
+    position: Optional[str] = None
+    photo_url: Optional[str] = None
+
+
+class MatchExperienceEvent(BaseModel):
+    id: int
+    minute: int
+    event_type: str
+    team_id: Optional[int] = None
+    player_name: Optional[str] = None
+    assist_player: Optional[str] = None
+    card_type: Optional[str] = None
+    detail: Optional[str] = None
+
+
+class MatchExperienceSubstitution(BaseModel):
+    id: int
+    minute: int
+    team_id: Optional[int] = None
+    player_name: Optional[str] = None
+    detail: Optional[str] = None
+
+
+class MatchExperienceRecentMatch(BaseModel):
+    match_id: int
+    start_time: datetime
+    status: str
+    opponent_name: str
+    opponent_logo: Optional[str] = None
+    is_home: bool
+    team_score: Optional[int] = None
+    opponent_score: Optional[int] = None
+    result: Optional[str] = None
+    competition_name: Optional[str] = None
+
+
+class MatchExperienceLineups(BaseModel):
+    home_starting_xi: List[MatchExperiencePlayer]
+    away_starting_xi: List[MatchExperiencePlayer]
+    substitutions: List[MatchExperienceSubstitution]
+    source: str
+
+
+class MatchExperienceForm(BaseModel):
+    home_last_five: List[MatchExperienceRecentMatch]
+    away_last_five: List[MatchExperienceRecentMatch]
+
+
+class MatchExperienceTeams(BaseModel):
+    home: MatchExperienceTeam
+    away: MatchExperienceTeam
+
+
+class MatchExperienceSquads(BaseModel):
+    home: List[MatchExperiencePlayer]
+    away: List[MatchExperiencePlayer]
+
+
+class MatchExperiencePartialFailure(BaseModel):
+    section: str
+    message: str
+
+
+class MatchExperience(BaseModel):
+    header: MatchExperienceHeader
+    teams: MatchExperienceTeams
+    prediction: Optional[Prediction] = None
+    events: List[MatchExperienceEvent]
+    lineups: MatchExperienceLineups
+    form: MatchExperienceForm
+    squads: MatchExperienceSquads
+    partial_failures: List[MatchExperiencePartialFailure] = []
+
 class Standing(BaseModel):
     rank: int
     team_id: int

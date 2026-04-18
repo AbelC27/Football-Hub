@@ -18,6 +18,7 @@ export const metadata: Metadata = {
 };
 
 import { Navbar } from "@/components/Navbar";
+import { Providers } from "@/components/Providers";
 import { AuthProvider } from "@/context/AuthContext";
 import { ThemeProvider } from "@/components/ThemeProvider";
 
@@ -33,10 +34,12 @@ export default function RootLayout({
         suppressHydrationWarning
       >
         <ThemeProvider attribute="class" defaultTheme="system" enableSystem>
-          <AuthProvider>
-            <Navbar />
-            {children}
-          </AuthProvider>
+          <Providers>
+            <AuthProvider>
+              <Navbar />
+              {children}
+            </AuthProvider>
+          </Providers>
         </ThemeProvider>
       </body>
     </html>

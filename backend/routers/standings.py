@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from sqlalchemy import and_, or_
 from typing import List
+import datetime
 import sys
 import os
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -38,6 +39,7 @@ class TeamStanding(BaseModel):
 @router.get("/league/{league_id}/standings", response_model=List[TeamStanding])
 def get_league_standings(league_id: int, db: Session = Depends(get_db)):
     """Calculate and return league standings"""
+    season_window_start = datetime.datetime.utcnow() - datetime.timedelta(days=365)
     
     # Get all teams in the league
     teams = db.query(Team).filter(Team.league_id == league_id).all()
@@ -50,7 +52,8 @@ def get_league_standings(league_id: int, db: Session = Depends(get_db)):
             and_(
                 or_(Match.home_team_id == team.id, Match.away_team_id == team.id),
                 Match.status == 'FT',
-                Match.home_score.isnot(None)
+                Match.home_score.isnot(None),
+                Match.start_time >= season_window_start
             )
         ).order_by(Match.start_time.desc()).all()
         

@@ -2,6 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 app = FastAPI(title="Football Analytics AI")
+scheduler_instance = None
 
 # CORS
 app.add_middleware(
@@ -29,7 +30,17 @@ app.include_router(search_router.router)
 
 @app.on_event("startup")
 def startup_event():
-    start_scheduler()
+    global scheduler_instance
+    if scheduler_instance is None:
+        scheduler_instance = start_scheduler()
+
+
+@app.on_event("shutdown")
+def shutdown_event():
+    global scheduler_instance
+    if scheduler_instance is not None:
+        scheduler_instance.shutdown(wait=False)
+        scheduler_instance = None
 
 @app.get("/")
 def read_root():
