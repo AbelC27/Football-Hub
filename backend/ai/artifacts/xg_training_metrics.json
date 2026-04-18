@@ -1,0 +1,215 @@
+{
+  "version": "xg_model_v1",
+  "scope": "Top 5 leagues + UEFA Champions League",
+  "trained_at_utc": "2026-04-18T19:03:57Z",
+  "mode": "xg_proxy",
+  "granularity": {
+    "mode": "xg_proxy",
+    "reason": "No shot-level table with coordinates was found; using aggregate match statistics (shots, possession, corners, events) for an explicitly labeled xG proxy.",
+    "shot_table": null,
+    "row_count": 0,
+    "required_columns_present": false,
+    "optional_context_columns": null
+  },
+  "target_column": "target_goals",
+  "training_data": {
+    "rows": 2774,
+    "unique_matches": 1387,
+    "unique_teams": 110,
+    "train_rows": 2220,
+    "test_rows": 554,
+    "target_column": "target_goals"
+  },
+  "metrics": {
+    "train": {
+      "rows": 2220,
+      "mae": 0.9162278672938873,
+      "rmse": 1.1492140399919226,
+      "r2": 0.10815004126532779,
+      "calibration_mae_10_bin": 0.0652290791400892,
+      "prob_score_ge1_ece_10_bin": 0.01448509913293607,
+      "mean_prediction": 1.384682938517787,
+      "mean_target": 1.3846846846846848
+    },
+    "test": {
+      "rows": 554,
+      "mae": 0.9044142762005041,
+      "rmse": 1.120402451271723,
+      "r2": 0.10312552476516401,
+      "calibration_mae_10_bin": 0.11461312065662771,
+      "prob_score_ge1_ece_10_bin": 0.01196026145080418,
+      "mean_prediction": 1.3868508602656173,
+      "mean_target": 1.371841155234657
+    }
+  },
+  "calibration_bins": {
+    "train": [
+      {
+        "bin_start": 0.534,
+        "bin_end": 0.9865,
+        "count": 222,
+        "predicted_mean": 0.8894,
+        "actual_mean": 0.8829,
+        "absolute_gap": 0.0065
+      },
+      {
+        "bin_start": 0.9865,
+        "bin_end": 1.0837,
+        "count": 222,
+        "predicted_mean": 1.038,
+        "actual_mean": 1.018,
+        "absolute_gap": 0.02
+      },
+      {
+        "bin_start": 1.0837,
+        "bin_end": 1.1599,
+        "count": 222,
+        "predicted_mean": 1.1212,
+        "actual_mean": 1.0946,
+        "absolute_gap": 0.0266
+      },
+      {
+        "bin_start": 1.1599,
+        "bin_end": 1.2404,
+        "count": 222,
+        "predicted_mean": 1.2035,
+        "actual_mean": 1.1306,
+        "absolute_gap": 0.0728
+      },
+      {
+        "bin_start": 1.2404,
+        "bin_end": 1.3177,
+        "count": 222,
+        "predicted_mean": 1.278,
+        "actual_mean": 1.3198,
+        "absolute_gap": 0.0418
+      },
+      {
+        "bin_start": 1.3177,
+        "bin_end": 1.4097,
+        "count": 222,
+        "predicted_mean": 1.3636,
+        "actual_mean": 1.3108,
+        "absolute_gap": 0.0528
+      },
+      {
+        "bin_start": 1.4097,
+        "bin_end": 1.5211,
+        "count": 222,
+        "predicted_mean": 1.4631,
+        "actual_mean": 1.4279,
+        "absolute_gap": 0.0352
+      },
+      {
+        "bin_start": 1.5211,
+        "bin_end": 1.6629,
+        "count": 222,
+        "predicted_mean": 1.5881,
+        "actual_mean": 1.7387,
+        "absolute_gap": 0.1507
+      },
+      {
+        "bin_start": 1.6629,
+        "bin_end": 1.8667,
+        "count": 222,
+        "predicted_mean": 1.7563,
+        "actual_mean": 1.6441,
+        "absolute_gap": 0.1122
+      },
+      {
+        "bin_start": 1.8667,
+        "bin_end": 3.8492,
+        "count": 222,
+        "predicted_mean": 2.1456,
+        "actual_mean": 2.2793,
+        "absolute_gap": 0.1337
+      }
+    ],
+    "test": [
+      {
+        "bin_start": 0.7255,
+        "bin_end": 0.9947,
+        "count": 56,
+        "predicted_mean": 0.9107,
+        "actual_mean": 0.9821,
+        "absolute_gap": 0.0715
+      },
+      {
+        "bin_start": 0.9947,
+        "bin_end": 1.0999,
+        "count": 55,
+        "predicted_mean": 1.0483,
+        "actual_mean": 1.2364,
+        "absolute_gap": 0.1881
+      },
+      {
+        "bin_start": 1.0999,
+        "bin_end": 1.1926,
+        "count": 55,
+        "predicted_mean": 1.1433,
+        "actual_mean": 0.9273,
+        "absolute_gap": 0.2161
+      },
+      {
+        "bin_start": 1.1926,
+        "bin_end": 1.2576,
+        "count": 56,
+        "predicted_mean": 1.2249,
+        "actual_mean": 1.125,
+        "absolute_gap": 0.0999
+      },
+      {
+        "bin_start": 1.2576,
+        "bin_end": 1.3312,
+        "count": 55,
+        "predicted_mean": 1.2947,
+        "actual_mean": 1.3091,
+        "absolute_gap": 0.0143
+      },
+      {
+        "bin_start": 1.3312,
+        "bin_end": 1.4146,
+        "count": 55,
+        "predicted_mean": 1.3733,
+        "actual_mean": 1.3636,
+        "absolute_gap": 0.0096
+      },
+      {
+        "bin_start": 1.4146,
+        "bin_end": 1.5222,
+        "count": 56,
+        "predicted_mean": 1.4714,
+        "actual_mean": 1.4286,
+        "absolute_gap": 0.0429
+      },
+      {
+        "bin_start": 1.5222,
+        "bin_end": 1.626,
+        "count": 55,
+        "predicted_mean": 1.5629,
+        "actual_mean": 1.5091,
+        "absolute_gap": 0.0538
+      },
+      {
+        "bin_start": 1.626,
+        "bin_end": 1.8682,
+        "count": 55,
+        "predicted_mean": 1.737,
+        "actual_mean": 1.5091,
+        "absolute_gap": 0.2279
+      },
+      {
+        "bin_start": 1.8682,
+        "bin_end": 2.9562,
+        "count": 56,
+        "predicted_mean": 2.099,
+        "actual_mean": 2.3214,
+        "absolute_gap": 0.2224
+      }
+    ]
+  },
+  "shot_metrics": {},
+  "notes": [
+    "xG proxy uses aggregate match statistics and team history. It is not shot-by-shot true xG."
+  ]
+}

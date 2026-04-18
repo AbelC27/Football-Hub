@@ -8,6 +8,8 @@ try:
     from backend.models import Match, League, Team, Prediction, Player, MatchEvent, MatchStatistics
     from backend.schemas import (
         Match as MatchSchema,
+        MatchXGLiveResponse as MatchXGLiveResponseSchema,
+        MatchXGPreMatchResponse as MatchXGPreMatchResponseSchema,
         Prediction as PredictionSchema,
         MatchExperience as MatchExperienceSchema,
         NextEventPredictionResponse as NextEventPredictionResponseSchema,
@@ -17,6 +19,8 @@ except ImportError:
     from models import Match, League, Team, Prediction, Player, MatchEvent, MatchStatistics
     from schemas import (
         Match as MatchSchema,
+        MatchXGLiveResponse as MatchXGLiveResponseSchema,
+        MatchXGPreMatchResponse as MatchXGPreMatchResponseSchema,
         Prediction as PredictionSchema,
         MatchExperience as MatchExperienceSchema,
         NextEventPredictionResponse as NextEventPredictionResponseSchema,
@@ -29,6 +33,11 @@ try:
     from backend.ai.next_event_ranker import next_event_inference_service
 except ImportError:
     from ai.next_event_ranker import next_event_inference_service
+
+try:
+    from backend.ai.xg_model import xg_inference_service
+except ImportError:
+    from ai.xg_model import xg_inference_service
 
 router = APIRouter(prefix="/api/v1", tags=["api"])
 
@@ -1326,6 +1335,80 @@ def get_match_next_events_prediction(
             deduped.append(note)
 
     payload["global_limitations"] = deduped
+    return payload
+
+
+@router.get("/match/{match_id}/xg/pre-match", response_model=MatchXGPreMatchResponseSchema)
+def get_match_xg_pre_match(
+    match_id: int,
+    db: Session = Depends(get_db),
+):
+    match = db.query(Match).filter(Match.id == match_id).first()
+    if not match:
+        raise HTTPException(status_code=404, detail="Match not found")
+
+    team_cache = {}
+    league_cache = {}
+
+    home_team = _get_cached_team(match.home_team_id, db, team_cache)
+    away_team = _get_cached_team(match.away_team_id, db, team_cache)
+    if not home_team or not away_team:
+        raise HTTPException(status_code=404, detail="Match teams not found")
+
+    home_league = _get_league_for_team(home_team, db, league_cache)
+    away_league = _get_league_for_team(away_team, db, league_cache)
+
+    if not (_is_supported_league(home_league) or _is_supported_league(away_league)):
+        raise HTTPException(
+            status_code=403,
+            detail="xG forecasts are limited to Top 5 leagues + UCL matches.",
+        )
+
+    return xg_inference_service.predict_pre_match(db=db, match=match)
+
+
+@router.get("/match/{match_id}/xg/live", response_model=MatchXGLiveResponseSchema)
+def get_match_xg_live(
+    match_id: int,
+    minute: Optional[int] = Query(None, ge=0, le=130, description="Optional minute override for live xG context."),
+    db: Session = Depends(get_db),
+):
+    match = db.query(Match).filter(Match.id == match_id).first()
+    if not match:
+        raise HTTPException(status_code=404, detail="Match not found")
+
+    team_cache = {}
+    league_cache = {}
+
+    home_team = _get_cached_team(match.home_team_id, db, team_cache)
+    away_team = _get_cached_team(match.away_team_id, db, team_cache)
+    if not home_team or not away_team:
+        raise HTTPException(status_code=404, detail="Match teams not found")
+
+    home_league = _get_league_for_team(home_team, db, league_cache)
+    away_league = _get_league_for_team(away_team, db, league_cache)
+
+    if not (_is_supported_league(home_league) or _is_supported_league(away_league)):
+        raise HTTPException(
+            status_code=403,
+            detail="Live xG updates are limited to Top 5 leagues + UCL matches.",
+        )
+
+    payload = xg_inference_service.predict_live(db=db, match=match, minute_override=minute)
+
+    if minute is None and _normalize_text(match.status) not in {_normalize_text(status) for status in IN_PLAY_MATCH_STATUSES}:
+        payload_disclaimers = list(payload.get("disclaimers", []))
+        payload_disclaimers.append(
+            "Match is not in-play; live xG trend currently reflects baseline context and available historical/live feed state."
+        )
+
+        deduped = []
+        for note in payload_disclaimers:
+            if note and note not in deduped:
+                deduped.append(note)
+
+        payload["disclaimers"] = deduped
+
     return payload
 
 @router.get("/match/{match_id}/events")

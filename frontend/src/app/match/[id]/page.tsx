@@ -8,6 +8,8 @@ import { AlertTriangle, RefreshCw } from 'lucide-react';
 import {
     getMatchExperience,
     getMatchNextEventsPrediction,
+    getMatchXGLive,
+    getMatchXGPreMatch,
     MatchExperience,
 } from '@/lib/api';
 import { useWebSocket } from '@/hooks/useWebSocket';
@@ -120,6 +122,26 @@ export default function MatchDetailsPage() {
         },
     });
 
+    const xgPreMatchQuery = useQuery({
+        queryKey: ['match-xg-pre-match', matchId],
+        queryFn: () => getMatchXGPreMatch(matchId as number),
+        enabled: typeof matchId === 'number' && matchId > 0,
+        staleTime: 60_000,
+        retry: false,
+    });
+
+    const xgLiveQuery = useQuery({
+        queryKey: ['match-xg-live', matchId],
+        queryFn: () => getMatchXGLive(matchId as number),
+        enabled: typeof matchId === 'number' && matchId > 0,
+        staleTime: 8_000,
+        retry: false,
+        refetchInterval: () => {
+            const status = query.data?.header.status?.toUpperCase();
+            return status && ['LIVE', 'HT', 'ET', 'P', '1H', '2H'].includes(status) ? 12_000 : false;
+        },
+    });
+
     useEffect(() => {
         if (query.isSuccess && !successToastShown.current) {
             successToastShown.current = true;
@@ -174,6 +196,7 @@ export default function MatchDetailsPage() {
         });
 
         queryClient.invalidateQueries({ queryKey: ['match-next-events', matchId] });
+        queryClient.invalidateQueries({ queryKey: ['match-xg-live', matchId] });
     }, [lastMessage, matchId, queryClient]);
 
     if (!matchId || matchId <= 0) {
@@ -209,12 +232,26 @@ export default function MatchDetailsPage() {
             : 'Could not load next-goal and next-assist predictions.'
         : null;
 
+    const xgError = xgLiveQuery.isError
+        ? xgLiveQuery.error instanceof Error
+            ? xgLiveQuery.error.message
+            : 'Could not load live xG updates.'
+        : xgPreMatchQuery.isError
+            ? xgPreMatchQuery.error instanceof Error
+                ? xgPreMatchQuery.error.message
+                : 'Could not load pre-match xG forecast.'
+            : null;
+
     return (
         <MatchExperienceView
             data={query.data}
             nextEventPrediction={nextEventsQuery.data || null}
             nextEventPredictionLoading={nextEventsQuery.isPending}
             nextEventPredictionError={nextEventsError}
+            xgPreMatch={xgPreMatchQuery.data || null}
+            xgLive={xgLiveQuery.data || null}
+            xgLoading={xgPreMatchQuery.isPending || xgLiveQuery.isPending}
+            xgError={xgError}
         />
     );
 }

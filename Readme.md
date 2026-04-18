@@ -302,3 +302,34 @@ Include model evaluation metrics and calibration checks in training outputs.
 Keep scope to Top 5 plus UCL.
 Add clear disclaimers in UI about confidence and data quality limits.
 End with report: architecture decisions, files changed, and next steps for accuracy improvements.
+
+---
+
+## Advanced xG Module (Implemented)
+
+### Training command
+
+Run from `backend/`:
+
+```bash
+python -m ai.train_xg_model --seed 42 --test-ratio 0.2 --history-window 12 --min-training-rows 120 --shot-min-rows 300 --poisson-alpha 0.18
+```
+
+Training outputs:
+
+- `backend/ai/artifacts/xg_model.pkl`
+- `backend/ai/artifacts/xg_training_metrics.json`
+- `backend/ai/artifacts/xg_training_config.json`
+- `backend/ai/artifacts/xg_feature_docs.md`
+
+### API endpoints
+
+- `GET /api/v1/match/{match_id}/xg/pre-match`
+- `GET /api/v1/match/{match_id}/xg/live`
+
+### Honest labeling
+
+The module auto-detects data granularity:
+
+- uses `true_xg` only when shot-level data with coordinates/outcomes is present and sufficient
+- otherwise uses explicit `xg_proxy` mode with disclaimers in API payload and UI

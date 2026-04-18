@@ -12,6 +12,8 @@ import {
 } from "lucide-react";
 import {
   MatchExperience,
+  MatchXGLiveResponse,
+  MatchXGPreMatchResponse,
   NextEventPredictionResponse,
   NextEventTaskPrediction,
 } from "@/lib/api";
@@ -19,12 +21,17 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { MatchXGPanel } from "@/components/MatchXGPanel";
 
 interface MatchExperienceViewProps {
   data: MatchExperience;
   nextEventPrediction?: NextEventPredictionResponse | null;
   nextEventPredictionLoading?: boolean;
   nextEventPredictionError?: string | null;
+  xgPreMatch?: MatchXGPreMatchResponse | null;
+  xgLive?: MatchXGLiveResponse | null;
+  xgLoading?: boolean;
+  xgError?: string | null;
 }
 
 function formatKickoff(value: string) {
@@ -208,6 +215,10 @@ export function MatchExperienceView({
   nextEventPrediction = null,
   nextEventPredictionLoading = false,
   nextEventPredictionError = null,
+  xgPreMatch = null,
+  xgLive = null,
+  xgLoading = false,
+  xgError = null,
 }: MatchExperienceViewProps) {
   const home = data.teams.home;
   const away = data.teams.away;
@@ -343,6 +354,15 @@ export function MatchExperienceView({
                 </CardContent>
               </Card>
             </div>
+
+            <MatchXGPanel
+              homeName={home.name}
+              awayName={away.name}
+              preMatch={xgPreMatch}
+              live={xgLive}
+              loading={xgLoading}
+              error={xgError}
+            />
 
             <Card className="mt-4">
               <CardHeader>

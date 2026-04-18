@@ -1,5 +1,5 @@
 from pydantic import BaseModel
-from typing import List, Optional, Literal, Dict
+from typing import Any, List, Optional, Literal, Dict
 from datetime import datetime, date
 
 class PlayerBase(BaseModel):
@@ -214,6 +214,56 @@ class NextEventPredictionResponse(BaseModel):
     global_limitations: List[str] = []
     next_goal: NextEventTaskPrediction
     next_assist: NextEventTaskPrediction
+
+
+class XGModelMetadata(BaseModel):
+    mode: str
+    is_proxy: bool
+    model_version: str
+    trained_at_utc: Optional[str] = None
+    confidence_score: float
+    confidence_label: str
+    granularity_reason: Optional[str] = None
+    training_sample_size: int = 0
+    calibration_summary: Dict[str, float] = {}
+
+
+class XGTeamValue(BaseModel):
+    team_id: int
+    team_name: str
+    xg: float
+
+
+class MatchXGPreMatchResponse(BaseModel):
+    match_id: int
+    scope: str
+    generated_at_utc: str
+    model: XGModelMetadata
+    home: XGTeamValue
+    away: XGTeamValue
+    expected_total_xg: float
+    feature_coverage: Dict[str, float] = {}
+    disclaimers: List[str] = []
+
+
+class XGTimelinePoint(BaseModel):
+    minute: int
+    home_xg: float
+    away_xg: float
+
+
+class MatchXGLiveResponse(BaseModel):
+    match_id: int
+    scope: str
+    generated_at_utc: str
+    model: XGModelMetadata
+    minute_context: int
+    home_current_xg: float
+    away_current_xg: float
+    timeline: List[XGTimelinePoint]
+    pre_match_baseline: Dict[str, float]
+    live_signals: Dict[str, Any]
+    disclaimers: List[str] = []
 
 class Standing(BaseModel):
     rank: int

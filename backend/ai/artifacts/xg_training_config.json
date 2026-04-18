@@ -1,0 +1,13 @@
+{
+  "reproducible_config": {
+    "seed": 42,
+    "test_ratio": 0.2,
+    "history_window": 12,
+    "min_training_rows": 120,
+    "shot_min_rows": 300,
+    "poisson_alpha": 0.18
+  },
+  "artifact_path": "D:\\Licenta\\backend\\ai\\artifacts\\xg_model.pkl",
+  "metrics_path": "D:\\Licenta\\backend\\ai\\artifacts\\xg_training_metrics.json",
+  "feature_doc_path": "D:\\Licenta\\backend\\ai\\artifacts\\xg_feature_docs.md"
+}
