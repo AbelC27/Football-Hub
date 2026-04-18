@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-app = FastAPI(title="Football Analytics AI")
+app = FastAPI(title="TerraBall")
 scheduler_instance = None
 
 # CORS
@@ -44,4 +44,4 @@ def shutdown_event():
 
 @app.get("/")
 def read_root():
-    return {"message": "Football Analytics AI Backend is running"}
+    return {"message": "TerraBall Backend is running"}

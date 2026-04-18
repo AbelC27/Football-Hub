@@ -1,335 +1,283 @@
-Project Blueprint: Intelligent Football Analytics Platform
+# TerraBall
 
-Bachelor Degree Capstone Project
+TerraBall is a full-stack football analytics platform built for a bachelor capstone project.
 
-1. Executive Summary
+It combines:
 
-This project is a modern web application designed to provide real-time football statistics, comprehensive match data, and AI-driven predictive analytics for the top 5 European leagues (Premier League, La Liga, Bundesliga, Serie A, Ligue 1) and major UEFA competitions. Unlike standard scoreboards, this platform integrates a Deep Learning engine to forecast match outcomes based on historical performance metrics.
+- live and scheduled match data
+- standings, team and player exploration
+- match experience pages with events, form, and lineups
+- AI predictions (match outcome, next event ranking, xG pre-match/live)
+- fantasy features (legacy team mode and player-based mode)
 
-2. Technology Stack & Justification
+Scope is focused on Top 5 European leagues plus UEFA Champions League.
 
-Frontend: Next.js (React)
+## Tech Stack
 
-Why: Best-in-class Server Side Rendering (SSR) for SEO-friendly match pages and fast initial loads.
+- Frontend: Next.js 16, React 19, TypeScript, Tailwind CSS 4
+- Backend: FastAPI, SQLAlchemy, APScheduler
+- Database: PostgreSQL 15 (Docker)
+- AI/ML: PyTorch, scikit-learn
+- Data providers: football-data.org, API-Football, TheSportsDB
 
-Backend: FastAPI (Python)
+## Repository Structure
 
-Why: Native support for asynchronous operations (essential for handling live WebSocket connections) and seamless integration with Python's AI ecosystem.
+```text
+.
+|-- backend/
+|   |-- main.py
+|   |-- models.py
+|   |-- schemas.py
+|   |-- scheduler.py
+|   |-- routers/
+|   |-- services/
+|   `-- ai/
+|-- frontend/
+|   |-- src/app/
+|   |-- src/components/
+|   `-- package.json
+|-- docs/tasks/
+|-- docker-compose.yml
+`-- Readme.md
+```
 
-Database: PostgreSQL
+## Prerequisites
 
-Why: robust relational data modeling for complex relationships (Players -> Teams -> Matches -> Leagues).
+- Python 3.10+
+- Node.js 18+
+- Docker Desktop
 
-AI/ML Engine: PyTorch (or TensorFlow)
+## Quick Start
 
-Why: Industry-standard framework for building Deep Neural Networks, allowing for complex pattern recognition in non-linear sports data.
+### 1. Start PostgreSQL
 
-External API: API-Football (RapidAPI)
+From project root:
 
-Why: Comprehensive coverage of required leagues with a student-friendly free tier.
+```bash
+docker-compose up -d
+```
 
-3. System Architecture
+### 2. Backend Setup
 
-3.1 Data Flow
+From `backend/`:
 
-Ingestion: A background scheduler (APScheduler) in FastAPI periodically fetches "Fixtures" and "Standings" from API-Football to keep the database fresh.
+```bash
+python -m venv venv
+venv\Scripts\activate
+pip install -r requirements.txt
+```
 
-Live Updates: When a match is "Live", the backend opens a WebSocket connection to the specific match data stream and broadcasts events (goals, cards) to connected Next.js clients.
+If auth dependencies are missing in your local environment, install:
 
-Prediction: 24 hours before a match, the PyTorch model runs, fetching historical stats for both teams, generating a probability score, and storing it in the match_predictions table.
+```bash
+pip install "python-jose[cryptography]" "passlib[argon2]"
+```
 
-4. Database Schema (Simplified ERD)
+Initialize schema:
 
-Leagues: id, name, country, logo_url
+```bash
+python migrate.py
+```
 
-Teams: id, name, logo_url, stadium, league_id
+Run API server:
 
-Players: id, name, position, team_id, height, nationality
+```bash
+uvicorn main:app --reload
+```
 
-Matches: id, home_team_id, away_team_id, start_time, status (LIVE/FT), home_score, away_score
+Backend URL:
 
-Predictions: id, match_id, home_win_prob, draw_prob, away_win_prob, confidence_score
+- http://localhost:8000
+- Swagger: http://localhost:8000/docs
 
-5. The AI "Wow" Feature (PyTorch Implementation)
+### 3. Frontend Setup
 
-5.1 Data Acquisition (Building the Dataset from Scratch)
+From `frontend/`:
 
-Since the AI needs historical context to learn, we cannot rely solely on "live" data.
+```bash
+npm install
+npm run dev
+```
 
-The "Seeder" Script: A standalone Python script will be created to query the External API for match results from the past 5 seasons (2019-2024).
+Frontend URL:
 
-Normalization: Raw data (e.g., "Goals Scored") will be normalized to a 0-1 scale (using MinMax scaling) to ensure the Neural Network converges efficiently.
+- http://localhost:3000
 
-Tensor Conversion: The cleaned CSV data will be converted into PyTorch Tensors (torch.float32) for training.
+## Environment Variables
 
-5.2 Feature Engineering
+Create `backend/.env` (optional but recommended):
 
-The model inputs (Features) will be a vector of ~20 data points per match:
+```env
+DATABASE_URL=postgresql://user:password@localhost/football_analytics
+FOOTBALL_DATA_ORG_KEY=your_key_here
+API_FOOTBALL_KEY=your_key_here
+THESPORTSDB_KEY=3
+FOOTBALL_DATA_COMPETITIONS=PL,PD,BL1,SA,FL1
+```
 
-Home/Away Form (Last 5 games): Rolling average of points.
+Notes:
 
-Goal Expectancy: Rolling average of Goals Scored vs. Conceded.
+- `FOOTBALL_DATA_ORG_KEY` is important for scheduler sync and reliable data refresh.
+- `THESPORTSDB_KEY=3` is the public test key.
+- Current frontend API calls are hardcoded to `http://localhost:8000`, so run backend on that host/port in local development.
 
-Head-to-Head Weight: A calculated score based on the last 3 meetings.
+## Data Ingestion and Refresh
 
-League Position Diff: Difference in league table rank (e.g., 1st vs 18th).
+### Automatic Refresh (recommended)
 
-5.3 The Model Architecture (Deep Learning)
+On backend startup, APScheduler:
 
-We will implement a Multi-Layer Perceptron (MLP) suitable for tabular data:
+- syncs fixtures/teams/leagues for configured competitions every 60 seconds
+- generates predictions every hour
 
-Input Layer: 20 Nodes (Features).
+### Manual Scripts
 
-Hidden Layer 1: 64 Neurons + ReLU Activation + Dropout (to prevent overfitting).
+From `backend/`:
 
-Hidden Layer 2: 32 Neurons + ReLU Activation.
+```bash
+python seed_events.py
+```
 
-Output Layer: 3 Neurons (Home Win, Draw, Away Win) + Softmax Activation.
+Seeds recent events and match statistics.
 
-Loss Function: CrossEntropyLoss.
+```bash
+python seed_football_data_org.py
+```
 
-Optimizer: Adam.
+Destructive full reseed (drops and recreates tables).
 
-6. API Endpoint Structure (FastAPI)
+```bash
+python migrate_fantasy_player_mode.py
+```
 
-GET /api/v1/live - Returns currently active matches.
+Additive migration for player-based fantasy tables.
 
-GET /api/v1/fixtures?league=39 - Returns schedule for Premier League.
+## AI Modules
 
-GET /api/v1/match/{id}/details - Returns lineups, stats, and H2H.
+### xG Module
 
-GET /api/v1/match/{id}/prediction - Returns the AI forecast (probabilities).
+The xG module auto-selects mode:
 
-WS /ws/match/{id} - WebSocket endpoint for real-time score pushes.
+- `true_xg` when shot-level data is sufficient
+- `xg_proxy` otherwise (with explicit disclaimers in API payload)
 
-7. Development Roadmap
-
-Phase 1 (Setup): Initialize Next.js repo and FastAPI backend. Set up PostgreSQL via Docker.
-
-Phase 2 (Data Seeding): Write the "Time Machine" script to fetch historical data from API-Football and populate the DB.
-
-Phase 3 (The AI): Build the PyTorch MLP class. Train it on the seeded data. Save the model weights (model.pth).
-
-Phase 4 (Frontend Core): Build the Match List, Standings Table, and detailed Match View components.
-
-Phase 5 (Integration): Create an API endpoint that loads model.pth, accepts current match stats, and returns a prediction.
-
-Phase 6 (Real-Time): Implement WebSockets for live score updates.
-
-8. Professor-Pleaser Details
-
-Model Evaluation: clearly display the model's "Accuracy" and "F1-Score" in your final report.
-
-Comparison: Briefly compare your Deep Learning model against a baseline (e.g., "Always predict Home Win") to prove it actually learned something.
-
-Architecture Diagram: Include a visual representation of your Neural Network layers in the thesis.
-
-
-
-
-03-match-page-complete-experience.md
-01-player-f2f-cards.md
-07-visualization-form-graphs-squad-depth.md
-02-next-goal-next-assist-model.md
-05-deep-fantasy-player-salary-cap.md
-06-social-live-match-chat.md
-04-advanced-ai-xg-model.md
-
-Shadcn UI + Radix UI
-TanStack Query
-React Hook Form + Zod
-Nivo
-Sonner
-React Virtuoso
-
-
-
-
-
-
-
-
-
-
-
-Use these prompts in order, one per chat session, so the LLM stays focused and quality stays high.
-
-Prompt for 03-match-page-complete-experience.md
-Prompt text:
-You are a senior full-stack engineer working in my existing Football-Hub repository (Next.js frontend, FastAPI backend, PostgreSQL). Implement a complete match experience page for route /match/[id].
-Requirements:
-
-Build or extend backend endpoints so one call can return match header, score/status, lineups/substitutions, events (goals, assists, cards), last 5 matches for both teams, AI predictions, and both squads with player basics (id, name, position, photo if available).
-
-Keep current architecture and coding style. Do not rewrite unrelated modules.
-
-Use TanStack Query for data fetching and caching, Shadcn UI plus Radix UI for components, and Sonner for error/success feedback.
-
-Frontend must support loading states, partial-failure states, and empty states without crashing.
-
-Make UX responsive and polished on desktop and mobile.
-
-Restrict competition scope to Top 5 leagues plus UCL.
-
-Add/update minimal tests for API contracts and page rendering.
-
-At the end, summarize exactly what changed, which files were touched, and what remains for later.
-
-Prompt for 01-player-f2f-cards.md
-
-Prompt text:
-Implement player head-to-head comparison cards on the existing compare players flow, with photo and meaningful real stats (not EA proprietary attributes).
-Requirements:
-
-Upgrade compare players UI to show two premium card-style panels side-by-side with player photo, team, position, nationality, age, season stats, and recent form.
-
-Include at least one visual comparison chart using Nivo (radar or bar).
-
-Define a transparent overall score formula from available stats and show score explanation.
-
-Use TanStack Query for fetching and caching comparison data.
-
-Add graceful fallback when one stat source is missing.
-
-Keep scope to Top 5 plus UCL players only.
-
-Maintain existing routes and do not break current compare page behavior.
-
-Provide final summary with touched files and a short list of next improvements.
-
-Prompt for 07-visualization-form-graphs-squad-depth.md
-
-Prompt text:
-Implement form graphs and squad depth visualizations for team analysis pages in this repository.
-Requirements:
-
-Add backend support for team form metrics (last 5 and last 10 matches, points trend, goals for/against, home/away split).
-
-Add squad depth metrics by position (starter quality, bench quality, availability if data exists).
-
-Build frontend visual components using Nivo with strong readability on desktop and mobile.
-
-Add controls to switch time windows and graph types where useful.
-
-Use TanStack Query for caching and refresh behavior.
-
-Keep charts fast and provide fallback UI when data is incomplete.
-
-Keep scope to Top 5 plus UCL teams.
-
-Output a concise implementation report with endpoint contracts and UI behavior.
-
-Prompt for 02-next-goal-next-assist-model.md
-
-
-Prompt text:
-Build the first production-ready baseline for predicting next goal scorer and next assist provider in live matches.
-Requirements:
-
-Create a training pipeline in backend AI modules with clear feature engineering from available data (match state, minute, lineups, cards, player historical form, team attacking/defensive priors).
-
-Implement baseline ranking model that returns Top 3 candidates for next goal and Top 3 for next assist with probabilities.
-
-Expose inference endpoint usable by match page.
-
-Add model evaluation scripts with Top-1, Top-3, log loss, and calibration metrics.
-
-Add clear labels about model confidence and data limitations.
-
-Keep scope to Top 5 plus UCL.
-
-Add docs for retraining workflow and required data refresh cadence.
-
-Provide final summary listing files changed, model assumptions, and known limitations.
-
-Prompt for 05-deep-fantasy-player-salary-cap.md
-
-Acm aici
-
-Prompt text:
-Implement player-based fantasy mode with salary cap in this app, extending current fantasy features without breaking existing flows.
-Requirements:
-
-Design and migrate schema for player squads, budgets, matchday picks, captain choice, transfers, and points history.
-
-Build backend rules engine for squad validation, budget validation, deadline lock, and scoring rules.
-
-Build frontend squad builder UX with React Hook Form and Zod validation.
-
-Add drag-and-drop support only if it stays stable and does not delay core flow.
-
-Add leaderboard and matchday points screens.
-
-Use Sonner for user feedback and TanStack Query for data sync.
-
-Keep scope to Top 5 plus UCL.
-
-End with migration notes, rollback safety notes, and test coverage summary.
-
-Prompt for 06-social-live-match-chat.md
-
-Prompt text:
-Implement live match chat rooms tied to match id, integrated with existing backend and frontend architecture.
-Requirements:
-
-Create WebSocket chat channels per match with authentication-aware usernames.
-
-Store recent messages for replay when a user joins late.
-
-Add anti-spam controls (rate limit per user), basic moderation hooks, and message sanitization.
-
-Build polished chat UI and use React Virtuoso for high-performance message list rendering.
-
-Show live connection state and error recovery states in UI.
-
-Ensure stable behavior under multiple concurrent users.
-
-Keep scope to Top 5 plus UCL matches.
-
-Provide final implementation summary and operational notes for production safety.
-
-Prompt for 04-advanced-ai-xg-model.md
-
-Prompt text:
-Implement an advanced xG module for this project, with honest labeling based on available data granularity.
-Requirements:
-
-If shot-level data is available, build true xG model; otherwise build xG proxy and label it explicitly as proxy.
-Add backend training and inference pipeline, with reproducible configuration and feature docs.
-Expose API endpoints for pre-match xG forecast and live xG updates.
-Add frontend xG visualizations on match page using Nivo (trend over time and team comparison).
-Include model evaluation metrics and calibration checks in training outputs.
-Keep scope to Top 5 plus UCL.
-Add clear disclaimers in UI about confidence and data quality limits.
-End with report: architecture decisions, files changed, and next steps for accuracy improvements.
-
----
-
-## Advanced xG Module (Implemented)
-
-### Training command
-
-Run from `backend/`:
+Train from `backend/`:
 
 ```bash
 python -m ai.train_xg_model --seed 42 --test-ratio 0.2 --history-window 12 --min-training-rows 120 --shot-min-rows 300 --poisson-alpha 0.18
 ```
 
-Training outputs:
+Artifacts are written to `backend/ai/artifacts/`.
 
-- `backend/ai/artifacts/xg_model.pkl`
-- `backend/ai/artifacts/xg_training_metrics.json`
-- `backend/ai/artifacts/xg_training_config.json`
-- `backend/ai/artifacts/xg_feature_docs.md`
+### Next Event Ranking
 
-### API endpoints
+Match endpoint for next-goal and next-assist Top-3 candidates:
 
-- `GET /api/v1/match/{match_id}/xg/pre-match`
-- `GET /api/v1/match/{match_id}/xg/live`
+- `GET /api/v1/match/{match_id}/next-events/prediction`
 
-### Honest labeling
+## API Overview
 
-The module auto-detects data granularity:
+### Core (`/api/v1`)
 
-- uses `true_xg` only when shot-level data with coordinates/outcomes is present and sufficient
-- otherwise uses explicit `xg_proxy` mode with disclaimers in API payload and UI
+- `GET /leagues`
+- `GET /live-matches`
+- `GET /match/{match_id}/details`
+- `GET /match/{match_id}/experience`
+- `GET /match/{match_id}/prediction`
+- `GET /match/{match_id}/next-events/prediction`
+- `GET /match/{match_id}/xg/pre-match`
+- `GET /match/{match_id}/xg/live`
+- `GET /match/{match_id}/events`
+- `GET /match/{match_id}/statistics`
+- `GET /league/{league_id}/standings`
+- `GET /teams`
+- `GET /teams/{team_id}`
+- `GET /teams/{team_id}/statistics`
+- `GET /teams/{team1_id}/vs/{team2_id}`
+- `GET /players`
+- `GET /players/{player_id}`
+- `GET /players/{player_id}/enhanced`
+- `GET /players/{player1_id}/vs/{player2_id}`
+
+### Auth (`/api/v1/auth`)
+
+- `POST /register`
+- `POST /login`
+- `GET /me`
+
+### Search (`/api/v1/search`)
+
+- `GET /teams`
+- `GET /players`
+- `GET /all`
+
+### Fantasy (`/api/v1/fantasy`)
+
+Legacy team mode:
+
+- `GET /my-teams`
+- `POST /select-teams`
+- `GET /my-points`
+- `GET /leaderboard`
+
+Player mode:
+
+- `GET /player-mode/rules`
+- `GET /player-mode/players`
+- `GET /player-mode/squad`
+- `POST /player-mode/squad`
+- `GET /player-mode/matchday/{matchday_key}/picks`
+- `PUT /player-mode/matchday/{matchday_key}/picks`
+- `POST /player-mode/matchday/{matchday_key}/transfers`
+- `GET /player-mode/matchday/{matchday_key}/points`
+- `GET /player-mode/leaderboard`
+
+### WebSocket
+
+- `WS /ws/live`
+
+## Frontend Routes
+
+- `/` live dashboard
+- `/match/[id]` match experience
+- `/league/[id]` league detail
+- `/team/[id]` team detail
+- `/team/[id]/statistics` team stats
+- `/player/[id]` player detail
+- `/compare/players/[id1]/vs/[id2]` player comparison
+- `/compare/teams/[id1]/vs/[id2]` team comparison
+- `/fantasy` fantasy hub
+- `/profile` profile and favorites
+- `/search` search page
+- `/teams` team listing
+- `/login` and `/register`
+
+## Testing
+
+Frontend (from `frontend/`):
+
+```bash
+npm test
+```
+
+Backend currently uses script-based tests/checks in `backend/` (examples):
+
+```bash
+python test_match_experience_contract.py
+python test_next_event_prediction_contract.py
+python test_prediction.py
+```
+
+## Troubleshooting
+
+- Import errors when starting backend: run commands from `backend/` and ensure virtual environment is active.
+- No fresh matches: verify `FOOTBALL_DATA_ORG_KEY` and watch backend logs for scheduler sync results.
+- Frontend cannot reach API: ensure backend is running at `http://localhost:8000`.
+- PostgreSQL issues: confirm container is up (`docker ps`) and `DATABASE_URL` is valid.
+
+## Production Notes
+
+- Replace wildcard CORS in backend with your frontend origin(s).
+- Use a real JWT secret and do not keep defaults.
+- Move provider keys to secure secret management.
+- Add reverse proxy/TLS and environment-specific configs.

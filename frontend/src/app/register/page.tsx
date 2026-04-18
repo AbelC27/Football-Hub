@@ -69,7 +69,7 @@ export default function RegisterPage() {
                         Create Account
                     </h2>
                     <p className="mt-2 text-center text-sm text-gray-600 dark:text-gray-400">
-                        Join the Football AI community
+                        Join the TerraBall community
                     </p>
                 </div>
                 <form className="mt-8 space-y-6" onSubmit={handleSubmit}>

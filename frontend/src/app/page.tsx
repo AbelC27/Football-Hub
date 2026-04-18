@@ -138,7 +138,7 @@ export default function Home() {
                 <div className="mb-12 text-center">
                     <h1 className="text-5xl md:text-7xl font-black mb-6 bg-clip-text text-transparent bg-gradient-to-b from-neutral-50 to-neutral-400 flex items-center justify-center gap-4">
                         <Sparkles className="w-12 h-12 text-blue-500" />
-                        Football Hub
+                        TerraBall
                     </h1>
                     <p className="text-neutral-400 text-lg max-w-2xl mx-auto">
                         Experience the beautiful game with real-time updates, advanced statistics, and immersive comparisons.
