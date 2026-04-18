@@ -10,6 +10,26 @@ import { Calendar, Clock, Trophy, Activity, Sparkles } from 'lucide-react';
 
 type TabType = 'live' | 'upcoming' | 'finished' | 'standings';
 
+const getLeagueDedupKey = (league: League) => {
+    const normalizedName = league.name.trim().toLowerCase();
+    const normalizedCountry = (league.country || '').trim().toLowerCase();
+    return `${normalizedName}|${normalizedCountry}`;
+};
+
+const dedupeLeagues = (leagues: League[]): League[] => {
+    const seen = new Set<string>();
+
+    return leagues.filter((league) => {
+        const key = getLeagueDedupKey(league);
+        if (seen.has(key)) {
+            return false;
+        }
+
+        seen.add(key);
+        return true;
+    });
+};
+
 export default function Home() {
     const [matches, setMatches] = useState<Match[]>([]);
     const [leagues, setLeagues] = useState<League[]>([]);
@@ -24,13 +44,20 @@ export default function Home() {
                     getLiveMatches(),
                     getLeagues()
                 ]);
+
+                const uniqueLeagues = dedupeLeagues(leaguesData);
                 setMatches(matchesData);
-                setLeagues(leaguesData);
+                setLeagues(uniqueLeagues);
 
                 // Set default league if available
-                if (leaguesData.length > 0 && !selectedLeague) {
-                    const pl = leaguesData.find(l => l.name === 'Premier League');
-                    setSelectedLeague(pl ? pl.id : leaguesData[0].id);
+                if (uniqueLeagues.length > 0) {
+                    const pl = uniqueLeagues.find(l => l.name.trim().toLowerCase() === 'premier league');
+
+                    if (!selectedLeague) {
+                        setSelectedLeague(pl ? pl.id : uniqueLeagues[0].id);
+                    } else if (!uniqueLeagues.some(l => l.id === selectedLeague)) {
+                        setSelectedLeague(pl ? pl.id : uniqueLeagues[0].id);
+                    }
                 }
 
                 // Auto-select tab based on available matches
