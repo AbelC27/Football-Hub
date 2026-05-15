@@ -17,7 +17,7 @@ except ImportError:
     from models import League, Match, NewsArticle, Team  # type: ignore[no-redef]
 
 
-router = APIRouter(prefix="/api/v1/news", tags=["news"])
+router = APIRouter(prefix="/api/v1/editorial", tags=["news"])
 
 
 # ---------------------------------------------------------------------------
