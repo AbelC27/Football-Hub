@@ -986,10 +986,10 @@ export interface NewsArticle extends NewsArticleSummary {
 }
 
 export async function getNewsTicker(limit = 15): Promise<NewsArticleSummary[]> {
-  const res = await fetch(`${API_BASE_URL}/news/ticker?limit=${limit}`, {
+  const res = await fetch(`${API_BASE_URL}/news/feed?limit=${limit}`, {
     cache: "no-store",
   });
-  if (!res.ok) throw new Error("Failed to fetch news ticker");
+  if (!res.ok) throw new Error("Failed to fetch news feed");
   return res.json();
 }
 

@@ -121,8 +121,8 @@ def list_news(
     return [_to_full(r, db) for r in rows]
 
 
-@router.get("/ticker", response_model=List[NewsArticleSummary])
-def news_ticker(
+@router.get("/feed", response_model=List[NewsArticleSummary])
+def news_feed(
     limit: int = Query(15, ge=1, le=50),
     db: Session = Depends(get_db),
 ):
