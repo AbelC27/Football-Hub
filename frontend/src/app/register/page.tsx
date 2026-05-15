@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { useAuth } from '@/context/AuthContext';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
+import { createClient } from '@/utils/supabase/client';
 
 export default function RegisterPage() {
     const [email, setEmail] = useState('');
@@ -14,6 +15,7 @@ export default function RegisterPage() {
     const [loading, setLoading] = useState(false);
     const { login } = useAuth();
     const router = useRouter();
+    const supabase = createClient();
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
@@ -27,32 +29,20 @@ export default function RegisterPage() {
         setLoading(true);
 
         try {
-            const response = await fetch('http://localhost:8000/api/v1/auth/register', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({ email, username, password }),
+            const { error: signUpError } = await supabase.auth.signUp({
+                email,
+                password,
+                options: {
+                    data: {
+                        username: username,
+                    }
+                }
             });
 
-            if (response.ok) {
-                // Auto-login after registration
-                const formData = new FormData();
-                formData.append('username', username);
-                formData.append('password', password);
-
-                const loginResponse = await fetch('http://localhost:8000/api/v1/auth/login', {
-                    method: 'POST',
-                    body: formData,
-                });
-
-                if (loginResponse.ok) {
-                    const data = await loginResponse.json();
-                    login(data.access_token);
-                }
+            if (signUpError) {
+                setError(signUpError.message);
             } else {
-                const errorData = await response.json();
-                setError(errorData.detail || 'Registration failed');
+                login();
             }
         } catch (err) {
             setError('An error occurred. Please try again.');
@@ -62,7 +52,7 @@ export default function RegisterPage() {
     };
 
     return (
-        <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-50 to-indigo-100 dark:from-gray-900 dark:to-gray-800 px-4">
+        <div className="min-h-screen flex items-center justify-center bg-neutral-950 text-neutral-200 px-4">
             <div className="max-w-md w-full space-y-8 bg-white dark:bg-gray-800 p-8 rounded-xl shadow-2xl">
                 <div>
                     <h2 className="text-center text-3xl font-bold text-gray-900 dark:text-white">

@@ -538,7 +538,7 @@ export default function FantasyPage() {
 
   if (authLoading) {
     return (
-      <main className="flex min-h-screen items-center justify-center bg-[radial-gradient(circle_at_top,_#edf6ff_0%,_#f6f8fb_42%,_#eef1f5_100%)] text-neutral-700 dark:bg-[radial-gradient(circle_at_top,_#162233_0%,_#0f1118_40%,_#0b0d11_100%)] dark:text-neutral-300">
+      <main className="flex min-h-screen items-center justify-center bg-neutral-950 text-neutral-200">
         Loading fantasy hub...
       </main>
     );
@@ -567,7 +567,7 @@ export default function FantasyPage() {
   }));
 
   return (
-    <main className="min-h-screen bg-[radial-gradient(circle_at_top,_#edf6ff_0%,_#f6f8fb_42%,_#eef1f5_100%)] px-4 py-6 dark:bg-[radial-gradient(circle_at_top,_#162233_0%,_#0f1118_40%,_#0b0d11_100%)] md:px-8 md:py-10">
+    <main className="min-h-screen bg-neutral-950 text-neutral-200 px-4 py-6 md:px-8 md:py-10">
       <div className="mx-auto max-w-7xl space-y-6">
         <header className="rounded-2xl border border-sky-100/70 bg-white/85 p-6 shadow-lg shadow-sky-100/40 backdrop-blur dark:border-sky-900/30 dark:bg-neutral-900/70 dark:shadow-none">
           <h1 className="text-3xl font-black tracking-tight text-neutral-900 dark:text-neutral-100 md:text-4xl">

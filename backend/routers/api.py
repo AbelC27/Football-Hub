@@ -1057,7 +1057,7 @@ def get_live_matches(db: Session = Depends(get_db)):
             "away_team_name": away_team.name if away_team else f"Team {match.away_team_id}",
             "home_team_logo": home_team.logo_url if home_team else None,
             "away_team_logo": away_team.logo_url if away_team else None,
-            "league_id": home_team.league_id if home_team else None,
+            "league_id": match.league_id if match.league_id else (home_team.league_id if home_team else None),
             "prediction": match.prediction
         }
         enriched_matches.append(match_dict)

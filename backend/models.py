@@ -60,6 +60,7 @@ class Player(Base):
 class Match(Base):
     __tablename__ = "matches"
     id = Column(Integer, primary_key=True, index=True)
+    league_id = Column(Integer, ForeignKey("leagues.id"), nullable=True)
     home_team_id = Column(Integer, ForeignKey("teams.id"))
     away_team_id = Column(Integer, ForeignKey("teams.id"))
     start_time = Column(DateTime)
@@ -125,10 +126,9 @@ class Standing(Base):
 
 class User(Base):
     __tablename__ = "users"
-    id = Column(Integer, primary_key=True, index=True)
+    id = Column(String, primary_key=True, index=True)
     email = Column(String, unique=True, index=True)
     username = Column(String, unique=True, index=True)
-    hashed_password = Column(String)
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
     
     # Profile
@@ -142,7 +142,7 @@ class User(Base):
 class FantasySelection(Base):
     __tablename__ = "fantasy_selections"
     id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer, ForeignKey("users.id"))
+    user_id = Column(String, ForeignKey("users.id"))
     team_id = Column(Integer, ForeignKey("teams.id"))
     
     # Relationships
@@ -154,7 +154,7 @@ class FantasyPlayerSquad(Base):
     __tablename__ = "fantasy_player_squads"
 
     id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer, ForeignKey("users.id"), unique=True, nullable=False, index=True)
+    user_id = Column(String, ForeignKey("users.id"), unique=True, nullable=False, index=True)
     budget_cap = Column(Numeric(10, 2), nullable=False, default=100.00)
     budget_spent = Column(Numeric(10, 2), nullable=False, default=0.00)
     created_at = Column(DateTime, default=datetime.datetime.utcnow, nullable=False)
@@ -258,7 +258,7 @@ class FantasyPointsHistory(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     squad_id = Column(Integer, ForeignKey("fantasy_player_squads.id"), nullable=False, index=True)
-    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    user_id = Column(String, ForeignKey("users.id"), nullable=False, index=True)
     matchday_key = Column(Date, nullable=False, index=True)
     player_id = Column(Integer, ForeignKey("players.id"), nullable=True)
     match_id = Column(Integer, ForeignKey("matches.id"), nullable=True)
@@ -280,7 +280,7 @@ class FantasyMatchdaySummary(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     squad_id = Column(Integer, ForeignKey("fantasy_player_squads.id"), nullable=False, index=True)
-    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    user_id = Column(String, ForeignKey("users.id"), nullable=False, index=True)
     matchday_key = Column(Date, nullable=False, index=True)
     total_points = Column(Integer, nullable=False, default=0)
     captain_player_id = Column(Integer, ForeignKey("players.id"), nullable=True)

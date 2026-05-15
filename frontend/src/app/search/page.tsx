@@ -63,7 +63,7 @@ export default function SearchPage() {
     const filteredPlayers = activeTab === 'all' || activeTab === 'players' ? results.players : [];
 
     return (
-        <main className="min-h-screen p-4 md:p-8 bg-gray-50 dark:bg-gray-900 text-gray-900 dark:text-white">
+        <main className="min-h-screen p-4 md:p-8 bg-neutral-950 text-neutral-200">
             <div className="max-w-7xl mx-auto">
                 {/* Header */}
                 <div className="text-center mb-8">

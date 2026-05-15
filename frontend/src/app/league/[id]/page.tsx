@@ -65,7 +65,7 @@ export default function LeagueStandings() {
     if (loading) return <div className="p-8 text-center">Loading standings...</div>;
 
     return (
-        <main className="min-h-screen p-4 md:p-8 bg-gray-50 dark:bg-gray-900">
+        <main className="min-h-screen p-4 md:p-8 bg-neutral-950 text-neutral-200">
             <div className="max-w-6xl mx-auto">
                 <Link href="/" className="inline-flex items-center text-blue-600 hover:underline mb-6">
                     <ArrowLeft className="w-4 h-4 mr-2" /> Back to Matches

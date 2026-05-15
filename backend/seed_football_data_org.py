@@ -38,10 +38,9 @@ from sqlalchemy.orm import Session
 import datetime
 
 
-# Drop all tables and recreate them
-print("Dropping all tables...")
-Base.metadata.drop_all(bind=engine)
-print("Creating all tables...")
+# Make sure tables exist (won't drop them, just creates if missing)
+# removed drop_all so you can run this safely to update data
+print("Checking and creating tables if they don't exist...")
 Base.metadata.create_all(bind=engine)
 
 def seed_league(db: Session, competition_code: str, competition_name: str):
@@ -118,6 +117,13 @@ def seed_league(db: Session, competition_code: str, competition_name: str):
         
         players = parse_players_from_team(team_data)
         for p in players:
+            # We track seen_players in a set to avoid adding duplicates in the same session
+            if 'seen_players' not in locals():
+                seen_players = set()
+            
+            if p['id'] in seen_players:
+                continue
+                
             existing_player = db.query(Player).filter(Player.id == p['id']).first()
             if not existing_player:
                 new_player = Player(
@@ -128,9 +134,17 @@ def seed_league(db: Session, competition_code: str, competition_name: str):
                     team_id=team['id']
                 )
                 db.add(new_player)
+                seen_players.add(p['id'])
                 total_players += 1
+            else:
+                seen_players.add(p['id'])
             
-    db.commit()
+    try:
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        print(f"  ⚠️ Error committing players: {e}")
+        
     print(f"✓ Processed {len(team_ids)} teams and added {total_players} new players")
     
     # Step 3: Fetch and add standings
@@ -208,6 +222,7 @@ def seed_league(db: Session, competition_code: str, competition_name: str):
             if not existing_match:
                 new_match = Match(
                     id=fixture['id'],
+                    league_id=league.id,
                     home_team_id=home_team_id,
                     away_team_id=away_team_id,
                     start_time=dt_obj,
@@ -218,7 +233,8 @@ def seed_league(db: Session, competition_code: str, competition_name: str):
                 db.add(new_match)
                 fixtures_added += 1
             else:
-                # Update status and score
+                # Update status, score and league
+                existing_match.league_id = league.id
                 existing_match.status = fixture['status']['short']
                 existing_match.home_score = goals['home']
                 existing_match.away_score = goals['away']

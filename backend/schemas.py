@@ -295,7 +295,7 @@ class UserLogin(BaseModel):
     password: str
 
 class User(UserBase):
-    id: int
+    id: str
     favorite_team_id: Optional[int] = None
     favorite_player_id: Optional[int] = None
     

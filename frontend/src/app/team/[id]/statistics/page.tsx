@@ -78,7 +78,7 @@ export default function TeamStatisticsPage() {
 
     if (!teamId || teamId <= 0) {
         return (
-            <main className="min-h-screen bg-[radial-gradient(circle_at_top,_#f4f9ff_0%,_#f6f8fc_40%,_#f1f2f5_100%)] p-4 md:p-8 dark:bg-[radial-gradient(circle_at_top,_#1b2432_0%,_#0f1117_40%,_#0b0c10_100%)]">
+            <main className="min-h-screen bg-neutral-950 text-neutral-200 p-4 md:p-8">
                 <div className="mx-auto max-w-6xl">
                     <Alert variant="destructive">
                         <AlertTitle>Invalid team id</AlertTitle>
@@ -91,7 +91,7 @@ export default function TeamStatisticsPage() {
 
     if (statsQuery.isPending) {
         return (
-            <main className="min-h-screen bg-[radial-gradient(circle_at_top,_#f4f9ff_0%,_#f6f8fc_40%,_#f1f2f5_100%)] p-4 md:p-8 dark:bg-[radial-gradient(circle_at_top,_#1b2432_0%,_#0f1117_40%,_#0b0c10_100%)]">
+            <main className="min-h-screen bg-neutral-950 text-neutral-200 p-4 md:p-8">
                 <div className="max-w-6xl mx-auto">
                     <LoadingSpinner />
                 </div>
@@ -101,7 +101,7 @@ export default function TeamStatisticsPage() {
 
     if (statsQuery.isError) {
         return (
-            <main className="min-h-screen bg-[radial-gradient(circle_at_top,_#f4f9ff_0%,_#f6f8fc_40%,_#f1f2f5_100%)] p-4 md:p-8 dark:bg-[radial-gradient(circle_at_top,_#1b2432_0%,_#0f1117_40%,_#0b0c10_100%)]">
+            <main className="min-h-screen bg-neutral-950 text-neutral-200 p-4 md:p-8">
                 <div className="mx-auto max-w-6xl space-y-4">
                     <Alert variant="destructive">
                         <AlertTitle>Could not load team analysis</AlertTitle>
@@ -125,7 +125,7 @@ export default function TeamStatisticsPage() {
 
     if (!stats || !selectedWindow) {
         return (
-            <main className="min-h-screen bg-[radial-gradient(circle_at_top,_#f4f9ff_0%,_#f6f8fc_40%,_#f1f2f5_100%)] p-4 md:p-8 dark:bg-[radial-gradient(circle_at_top,_#1b2432_0%,_#0f1117_40%,_#0b0c10_100%)]">
+            <main className="min-h-screen bg-neutral-950 text-neutral-200 p-4 md:p-8">
                 <div className="mx-auto max-w-6xl">
                     <Alert>
                         <AlertTitle>Team analytics unavailable</AlertTitle>
@@ -137,7 +137,7 @@ export default function TeamStatisticsPage() {
     }
 
     return (
-        <main className="min-h-screen bg-[radial-gradient(circle_at_top,_#f4f9ff_0%,_#f6f8fc_40%,_#f1f2f5_100%)] p-4 md:p-8 dark:bg-[radial-gradient(circle_at_top,_#1b2432_0%,_#0f1117_40%,_#0b0c10_100%)]">
+        <main className="min-h-screen bg-neutral-950 text-neutral-200 p-4 md:p-8">
             <div className="max-w-6xl mx-auto">
                 <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
                     <Link href={`/team/${teamId}`}>

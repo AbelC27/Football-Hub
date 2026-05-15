@@ -84,7 +84,7 @@ export default function ProfilePage() {
     };
 
     if (authLoading) {
-        return <div className="flex justify-center items-center min-h-screen">Loading...</div>;
+        return <div className="flex justify-center items-center min-h-screen bg-neutral-950 text-neutral-200">Loading...</div>;
     }
 
     if (!isAuthenticated) {
@@ -97,7 +97,7 @@ export default function ProfilePage() {
         : players;
 
     return (
-        <div className="container mx-auto px-4 py-8 max-w-4xl">
+        <main className="min-h-screen bg-neutral-950 text-neutral-200 p-4 md:p-8"><div className="container mx-auto px-4 py-8 max-w-4xl">
             <h1 className="text-3xl font-bold mb-8 text-gray-900 dark:text-white">
                 My Profile
             </h1>
@@ -175,6 +175,7 @@ export default function ProfilePage() {
                     </button>
                 </div>
             </div>
-        </div>
+        </div></main>
     );
 }
+

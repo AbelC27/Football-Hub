@@ -21,7 +21,7 @@ const WS_URL = 'ws://localhost:8000/ws/live';
 
 function MatchPageLoadingState() {
     return (
-        <main className="min-h-screen bg-[radial-gradient(circle_at_top,_#eef8ff_0%,_#f6f7fb_42%,_#f1f1f5_100%)] px-4 py-6 dark:bg-[radial-gradient(circle_at_top,_#1a2433_0%,_#0f1115_42%,_#0b0c0f_100%)] md:px-8 md:py-10">
+        <main className="min-h-screen bg-neutral-950 text-neutral-200 px-4 py-6 md:px-8 md:py-10">
             <div className="mx-auto max-w-6xl space-y-5">
                 <Skeleton className="h-5 w-44" />
                 <Card>
@@ -58,7 +58,7 @@ function MatchPageErrorState({
     onRetry: () => void;
 }) {
     return (
-        <main className="min-h-screen bg-[radial-gradient(circle_at_top,_#eef8ff_0%,_#f6f7fb_42%,_#f1f1f5_100%)] px-4 py-6 dark:bg-[radial-gradient(circle_at_top,_#1a2433_0%,_#0f1115_42%,_#0b0c0f_100%)] md:px-8 md:py-10">
+        <main className="min-h-screen bg-neutral-950 text-neutral-200 px-4 py-6 md:px-8 md:py-10">
             <div className="mx-auto max-w-2xl">
                 <Card>
                     <CardHeader>

@@ -25,7 +25,7 @@ export default function PlayerDetailPage() {
 
     if (loading) {
         return (
-            <main className="min-h-screen bg-gradient-to-br from-gray-50 via-blue-50 to-purple-50 dark:from-gray-900 dark:via-gray-900 dark:to-gray-900 p-4 md:p-8">
+            <main className="min-h-screen bg-neutral-950 text-neutral-200 p-4 md:p-8">
                 <div className="max-w-7xl mx-auto">
                     <LoadingSpinner />
                 </div>
@@ -35,7 +35,7 @@ export default function PlayerDetailPage() {
 
     if (!player) {
         return (
-            <main className="min-h-screen bg-gradient-to-br from-gray-50 via-blue-50 to-purple-50 dark:from-gray-900 dark:via-gray-900 dark:to-gray-900 p-4 md:p-8">
+            <main className="min-h-screen bg-neutral-950 text-neutral-200 p-4 md:p-8">
                 <div className="max-w-7xl mx-auto text-center py-20">
                     <h1 className="text-3xl font-bold text-gray-900 dark:text-white">Player not found</h1>
                 </div>
@@ -44,7 +44,7 @@ export default function PlayerDetailPage() {
     }
 
     return (
-        <main className="min-h-screen bg-gradient-to-br from-gray-50 via-blue-50 to-purple-50 dark:from-gray-900 dark:via-gray-900 dark:to-gray-900 p-4 md:p-8">
+        <main className="min-h-screen bg-neutral-950 text-neutral-200 p-4 md:p-8">
             <div className="max-w-7xl mx-auto">
                 {/* Back Button */}
                 <Link href={player.team ? `/team/${player.team.id}` : '/teams'}>
