@@ -18,6 +18,7 @@ export const metadata: Metadata = {
 };
 
 import { Navbar } from "@/components/Navbar";
+import { NewsBar } from "@/components/NewsBar";
 import { Providers } from "@/components/Providers";
 import { AuthProvider } from "@/context/AuthContext";
 import { ThemeProvider } from "@/components/ThemeProvider";
@@ -37,6 +38,7 @@ export default function RootLayout({
           <Providers>
             <AuthProvider>
               <Navbar />
+              <NewsBar />
               {children}
             </AuthProvider>
           </Providers>

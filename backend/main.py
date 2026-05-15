@@ -14,10 +14,10 @@ app.add_middleware(
 )
 
 try:
-    from backend.routers import api, ws, standings, auth_router, user_router, fantasy_router, search_router
+    from backend.routers import api, ws, standings, auth_router, user_router, fantasy_router, search_router, news_router
     from backend.scheduler import start_scheduler
 except ImportError:
-    from routers import api, ws, standings, auth_router, user_router, fantasy_router, search_router
+    from routers import api, ws, standings, auth_router, user_router, fantasy_router, search_router, news_router
     from scheduler import start_scheduler
 
 app.include_router(api.router)
@@ -27,6 +27,7 @@ app.include_router(auth_router.router)
 app.include_router(user_router.router)
 app.include_router(fantasy_router.router)
 app.include_router(search_router.router)
+app.include_router(news_router.router)
 
 @app.on_event("startup")
 def startup_event():

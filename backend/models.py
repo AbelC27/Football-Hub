@@ -291,3 +291,44 @@ class FantasyMatchdaySummary(Base):
     squad = relationship("FantasyPlayerSquad", back_populates="summaries")
     user = relationship("User")
     captain = relationship("Player")
+
+
+class NewsArticle(Base):
+    """AI-generated football news articles.
+
+    Two flavours of `news_type` are produced today:
+    - "post_match": written right after a fixture transitions to FT/AET/PEN.
+    - "pre_derby":  written when a known rivalry fixture is < 24h away.
+    """
+
+    __tablename__ = "news_articles"
+    __table_args__ = (
+        UniqueConstraint("dedupe_key", name="uq_news_articles_dedupe_key"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+
+    # Editorial fields
+    title = Column(String(255), nullable=False)
+    summary = Column(String(280), nullable=False)   # short text for the ticker bar
+    content = Column(String, nullable=False)        # full article body (markdown)
+    headline_image_url = Column(String, nullable=True)
+
+    # Classification
+    news_type = Column(String(32), nullable=False, index=True)  # "post_match" | "pre_derby"
+    related_fixture_id = Column(Integer, ForeignKey("matches.id"), nullable=True, index=True)
+    league_id = Column(Integer, ForeignKey("leagues.id"), nullable=True, index=True)
+    home_team_id = Column(Integer, ForeignKey("teams.id"), nullable=True)
+    away_team_id = Column(Integer, ForeignKey("teams.id"), nullable=True)
+
+    # Provenance / dedupe
+    model_name = Column(String(64), nullable=True)
+    dedupe_key = Column(String(128), nullable=False, index=True)
+    is_published = Column(Boolean, nullable=False, default=True)
+
+    created_at = Column(DateTime, nullable=False, default=datetime.datetime.utcnow, index=True)
+
+    fixture = relationship("Match", foreign_keys=[related_fixture_id])
+    league = relationship("League", foreign_keys=[league_id])
+    home_team = relationship("Team", foreign_keys=[home_team_id])
+    away_team = relationship("Team", foreign_keys=[away_team_id])

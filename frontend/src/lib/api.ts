@@ -950,3 +950,61 @@ export async function getFantasyPlayerModeLeaderboard(
 
   return res.json();
 }
+
+// ----------------------------------------------------------------------------
+// AI News Agent
+// ----------------------------------------------------------------------------
+
+export type NewsType = "post_match" | "pre_derby";
+
+export interface NewsArticleSummary {
+  id: number;
+  title: string;
+  summary: string;
+  news_type: NewsType;
+  related_fixture_id: number | null;
+  created_at: string;
+}
+
+export interface NewsTeamRef {
+  id: number;
+  name: string;
+  logo_url?: string | null;
+}
+
+export interface NewsLeagueRef {
+  id: number;
+  name: string;
+  country?: string | null;
+}
+
+export interface NewsArticle extends NewsArticleSummary {
+  content: string;
+  league?: NewsLeagueRef | null;
+  home_team?: NewsTeamRef | null;
+  away_team?: NewsTeamRef | null;
+}
+
+export async function getNewsTicker(limit = 15): Promise<NewsArticleSummary[]> {
+  const res = await fetch(`${API_BASE_URL}/news/ticker?limit=${limit}`, {
+    cache: "no-store",
+  });
+  if (!res.ok) throw new Error("Failed to fetch news ticker");
+  return res.json();
+}
+
+export async function getNews(opts?: {
+  limit?: number;
+  newsType?: NewsType;
+  leagueId?: number;
+}): Promise<NewsArticle[]> {
+  const params = new URLSearchParams();
+  if (opts?.limit) params.set("limit", String(opts.limit));
+  if (opts?.newsType) params.set("news_type", opts.newsType);
+  if (opts?.leagueId) params.set("league_id", String(opts.leagueId));
+  const suffix = params.toString() ? `?${params.toString()}` : "";
+
+  const res = await fetch(`${API_BASE_URL}/news${suffix}`, { cache: "no-store" });
+  if (!res.ok) throw new Error("Failed to fetch news");
+  return res.json();
+}

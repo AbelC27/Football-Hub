@@ -6,6 +6,7 @@ import { EnhancedMatchCard } from '@/components/EnhancedMatchCard';
 import { StandingsTable } from '@/components/StandingsTable';
 import { LeagueSelector } from '@/components/LeagueSelector';
 import { LoadingSpinner } from '@/components/LoadingSpinner';
+import { NewsSidebar } from '@/components/NewsSidebar';
 import { Calendar, Clock, Trophy, Activity, Sparkles } from 'lucide-react';
 
 type TabType = 'live' | 'upcoming' | 'finished' | 'standings';
@@ -193,53 +194,61 @@ export default function Home() {
                             </div>
                         </div>
 
-                        {/* Content */}
-                        {activeTab === 'standings' ? (
-                            <div className="bg-neutral-900/50 border border-neutral-800 rounded-3xl p-6 backdrop-blur-sm">
-                                <StandingsTable
-                                    leagueId={selectedLeague}
-                                    leagueName={leagues.find(l => l.id === selectedLeague)?.name}
-                                />
-                            </div>
-                        ) : (
-                            <div className="space-y-12">
-                                {sortedDates.length > 0 ? (
-                                    sortedDates.map(date => (
-                                        <div key={date}>
-                                            <div className="flex items-center gap-4 mb-6">
-                                                <div className="h-px flex-1 bg-gradient-to-r from-transparent via-neutral-800 to-transparent" />
-                                                <h3 className="text-xl font-bold text-neutral-400 uppercase tracking-widest">{date}</h3>
-                                                <div className="h-px flex-1 bg-gradient-to-r from-transparent via-neutral-800 to-transparent" />
-                                            </div>
-
-                                            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
-                                                {groupedMatches[date].map(match => (
-                                                    <EnhancedMatchCard key={match.id} match={match} />
-                                                ))}
-                                            </div>
-                                        </div>
-                                    ))
+                        {/* Content + News Sidebar */}
+                        <div className="grid grid-cols-1 lg:grid-cols-[1fr_340px] gap-8">
+                            <div>
+                                {activeTab === 'standings' ? (
+                                    <div className="bg-neutral-900/50 border border-neutral-800 rounded-3xl p-6 backdrop-blur-sm">
+                                        <StandingsTable
+                                            leagueId={selectedLeague}
+                                            leagueName={leagues.find(l => l.id === selectedLeague)?.name}
+                                        />
+                                    </div>
                                 ) : (
-                                    <div className="text-center py-32 bg-neutral-900/30 border border-neutral-800 rounded-3xl">
-                                        <div className="mb-6">
-                                            <div className="w-24 h-24 bg-neutral-800 rounded-full mx-auto flex items-center justify-center">
-                                                {activeTab === 'live' && <Activity className="w-12 h-12 text-neutral-600" />}
-                                                {activeTab === 'upcoming' && <Calendar className="w-12 h-12 text-neutral-600" />}
-                                                {activeTab === 'finished' && <Clock className="w-12 h-12 text-neutral-600" />}
+                                    <div className="space-y-12">
+                                        {sortedDates.length > 0 ? (
+                                            sortedDates.map(date => (
+                                                <div key={date}>
+                                                    <div className="flex items-center gap-4 mb-6">
+                                                        <div className="h-px flex-1 bg-gradient-to-r from-transparent via-neutral-800 to-transparent" />
+                                                        <h3 className="text-xl font-bold text-neutral-400 uppercase tracking-widest">{date}</h3>
+                                                        <div className="h-px flex-1 bg-gradient-to-r from-transparent via-neutral-800 to-transparent" />
+                                                    </div>
+
+                                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                                                        {groupedMatches[date].map(match => (
+                                                            <EnhancedMatchCard key={match.id} match={match} />
+                                                        ))}
+                                                    </div>
+                                                </div>
+                                            ))
+                                        ) : (
+                                            <div className="text-center py-32 bg-neutral-900/30 border border-neutral-800 rounded-3xl">
+                                                <div className="mb-6">
+                                                    <div className="w-24 h-24 bg-neutral-800 rounded-full mx-auto flex items-center justify-center">
+                                                        {activeTab === 'live' && <Activity className="w-12 h-12 text-neutral-600" />}
+                                                        {activeTab === 'upcoming' && <Calendar className="w-12 h-12 text-neutral-600" />}
+                                                        {activeTab === 'finished' && <Clock className="w-12 h-12 text-neutral-600" />}
+                                                    </div>
+                                                </div>
+                                                <h3 className="text-2xl font-bold text-neutral-300 mb-2">
+                                                    No {activeTab} matches
+                                                </h3>
+                                                <p className="text-neutral-500">
+                                                    {activeTab === 'live' && 'There are no live matches at the moment.'}
+                                                    {activeTab === 'upcoming' && 'No upcoming matches scheduled.'}
+                                                    {activeTab === 'finished' && 'No finished matches to display.'}
+                                                </p>
                                             </div>
-                                        </div>
-                                        <h3 className="text-2xl font-bold text-neutral-300 mb-2">
-                                            No {activeTab} matches
-                                        </h3>
-                                        <p className="text-neutral-500">
-                                            {activeTab === 'live' && 'There are no live matches at the moment.'}
-                                            {activeTab === 'upcoming' && 'No upcoming matches scheduled.'}
-                                            {activeTab === 'finished' && 'No finished matches to display.'}
-                                        </p>
+                                        )}
                                     </div>
                                 )}
                             </div>
-                        )}
+
+                            <div className="lg:sticky lg:top-6 lg:self-start">
+                                <NewsSidebar leagueId={selectedLeague} />
+                            </div>
+                        </div>
                     </>
                 )}
             </div>

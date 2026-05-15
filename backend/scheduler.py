@@ -8,11 +8,13 @@ try:
     from backend.services.football_data_org import fetch_competition_matches, parse_match_from_fd
     from backend.models import Match, League, Team
     from backend.generate_predictions import generate_predictions
+    from backend.services.news_triggers import run_post_match_news, run_pre_derby_news
 except ImportError:
     from database import SessionLocal
     from services.football_data_org import fetch_competition_matches, parse_match_from_fd
     from models import Match, League, Team
     from generate_predictions import generate_predictions
+    from services.news_triggers import run_post_match_news, run_pre_derby_news
 import pytz
 
 # Configure logging
@@ -210,7 +212,25 @@ def start_scheduler():
         name='Generate Predictions',
         replace_existing=True
     )
-    
+
+    # AI news: scan finished matches every 5 minutes for fresh post-match reports.
+    scheduler.add_job(
+        run_post_match_news,
+        trigger=IntervalTrigger(minutes=5),
+        id='ai_news_post_match',
+        name='AI News - Post Match',
+        replace_existing=True,
+    )
+
+    # AI news: scan for upcoming derbies (< 24h away) once per hour.
+    scheduler.add_job(
+        run_pre_derby_news,
+        trigger=IntervalTrigger(hours=1),
+        id='ai_news_pre_derby',
+        name='AI News - Pre Derby',
+        replace_existing=True,
+    )
+
     scheduler.start()
     logger.info("Background scheduler started.")
     return scheduler

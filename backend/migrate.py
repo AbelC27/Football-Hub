@@ -4,7 +4,7 @@ Run this script to update the database schema with new tables
 """
 
 from database import engine, Base
-from models import League, Team, Player, Match, Prediction, MatchEvent, MatchStatistics
+from models import League, Team, Player, Match, Prediction, MatchEvent, MatchStatistics, NewsArticle
 
 def migrate_database():
     print("Creating new tables...")
@@ -16,6 +16,7 @@ def migrate_database():
     print("New tables created:")
     print("  - match_events")
     print("  - match_statistics")
+    print("  - news_articles")
 
 if __name__ == "__main__":
     migrate_database()
