@@ -1031,10 +1031,10 @@ export interface NewsArticle extends NewsArticleSummary {
 }
 
 export async function getNewsTicker(limit = 15): Promise<NewsArticleSummary[]> {
-  const res = await fetch(`${API_BASE_URL}/news/ticker?limit=${limit}`, {
+  const res = await fetch(`${API_BASE_URL}/editorial/feed?limit=${limit}&_t=${Date.now()}`, {
     cache: "no-store",
   });
-  if (!res.ok) throw new Error("Failed to fetch news ticker");
+  if (!res.ok) throw new Error("Failed to fetch news feed");
   return res.json();
 }
 
@@ -1047,9 +1047,12 @@ export async function getNews(opts?: {
   if (opts?.limit) params.set("limit", String(opts.limit));
   if (opts?.newsType) params.set("news_type", opts.newsType);
   if (opts?.leagueId) params.set("league_id", String(opts.leagueId));
-  const suffix = params.toString() ? `?${params.toString()}` : "";
+  const suffix = params.toString() ? `?${params.toString()}&_t=${Date.now()}` : `?_t=${Date.now()}`;
 
-  const res = await fetch(`${API_BASE_URL}/news${suffix}`, { cache: "no-store" });
+  const res = await fetch(`${API_BASE_URL}/editorial${suffix}`, { cache: "no-store", headers: {
+    "Cache-Control": "no-cache",
+    "Pragma": "no-cache"
+  } });
   if (!res.ok) throw new Error("Failed to fetch news");
   return res.json();
 }

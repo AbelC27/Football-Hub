@@ -60,15 +60,10 @@ logger = logging.getLogger(__name__)
 # Config
 # ---------------------------------------------------------------------------
 
-OPENROUTER_API_URL = "https://openrouter.ai/api/v1/chat/completions"
-OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "").strip()
-OPENROUTER_MODEL = os.getenv("OPENROUTER_MODEL", "openai/gpt-4o").strip()
+GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent"
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
 
-# Optional but recommended by OpenRouter for attribution
-OPENROUTER_REFERER = os.getenv("OPENROUTER_REFERER", "http://localhost:3000")
-OPENROUTER_APP_TITLE = os.getenv("OPENROUTER_APP_TITLE", "TerraBall")
-
-REQUEST_TIMEOUT_SECONDS = 30.0
+REQUEST_TIMEOUT_SECONDS = 120.0
 
 SYSTEM_PROMPT = """You are a senior football journalist writing for a modern
 sports publication. You produce concise, factual, and engaging match coverage.
@@ -281,45 +276,58 @@ class AINewsAgentError(RuntimeError):
     """Raised when the upstream LLM call fails or returns malformed output."""
 
 
-def _call_openrouter(user_prompt: str) -> Dict[str, str]:
-    if not OPENROUTER_API_KEY:
+def _call_gemini(user_prompt: str) -> Dict[str, str]:
+    if not GEMINI_API_KEY:
         raise AINewsAgentError(
-            "OPENROUTER_API_KEY is not set. Add it to backend/.env to enable the news agent."
+            "GEMINI_API_KEY is not set. Add it to backend/.env to enable the news agent."
         )
 
+    url = f"{GEMINI_API_URL}?key={GEMINI_API_KEY}"
     headers = {
-        "Authorization": f"Bearer {OPENROUTER_API_KEY}",
         "Content-Type": "application/json",
-        "HTTP-Referer": OPENROUTER_REFERER,
-        "X-Title": OPENROUTER_APP_TITLE,
     }
     payload = {
-        "model": OPENROUTER_MODEL,
-        "temperature": 0.6,
-        "max_tokens": 900,
-        "response_format": {"type": "json_object"},
-        "messages": [
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": user_prompt},
+        "systemInstruction": {
+            "parts": [{"text": SYSTEM_PROMPT}]
+        },
+        "contents": [
+            {
+                "role": "user",
+                "parts": [{"text": user_prompt}]
+            }
         ],
+        "generationConfig": {
+            "temperature": 0.6,
+            "maxOutputTokens": 2048,
+            "responseMimeType": "application/json",
+            "responseSchema": {
+                "type": "OBJECT",
+                "properties": {
+                    "title": {"type": "STRING"},
+                    "summary": {"type": "STRING"},
+                    "content": {"type": "STRING"}
+                },
+                "required": ["title", "summary", "content"]
+            }
+        }
     }
 
     try:
         with httpx.Client(timeout=REQUEST_TIMEOUT_SECONDS) as client:
-            resp = client.post(OPENROUTER_API_URL, headers=headers, json=payload)
+            resp = client.post(url, headers=headers, json=payload)
     except httpx.HTTPError as exc:
-        raise AINewsAgentError(f"OpenRouter HTTP error: {exc}") from exc
+        raise AINewsAgentError(f"Gemini HTTP error: {exc}") from exc
 
     if resp.status_code != 200:
         raise AINewsAgentError(
-            f"OpenRouter returned {resp.status_code}: {resp.text[:500]}"
+            f"Gemini returned {resp.status_code}: {resp.text[:500]}"
         )
 
     try:
         body = resp.json()
-        raw = body["choices"][0]["message"]["content"]
+        raw = body["candidates"][0]["content"]["parts"][0]["text"]
     except (KeyError, ValueError, IndexError) as exc:
-        raise AINewsAgentError(f"Malformed OpenRouter response: {exc}") from exc
+        raise AINewsAgentError(f"Malformed Gemini response: {exc}") from exc
 
     parsed = _safe_json_loads(raw)
     if not parsed:
@@ -349,7 +357,10 @@ def _safe_json_loads(raw: str) -> Optional[Dict[str, Any]]:
         s = re.sub(r"\s*```$", "", s)
     try:
         return json.loads(s)
-    except json.JSONDecodeError:
+    except json.JSONDecodeError as err:
+        import traceback
+        print("JSON Decode Error: ", err)
+        print("Raw was:", repr(s))
         # Last resort: extract the first {...} block
         match = re.search(r"\{.*\}", s, re.DOTALL)
         if match:
@@ -371,7 +382,7 @@ def generate_post_match_article(ctx: Dict[str, Any]) -> Dict[str, str]:
         "Use only the facts provided.\n\n"
         f"FIXTURE_FACTS:\n{json.dumps(ctx, default=str, ensure_ascii=False)}"
     )
-    return _call_openrouter(prompt)
+    return _call_gemini(prompt)
 
 
 def generate_pre_derby_article(ctx: Dict[str, Any]) -> Dict[str, str]:
@@ -383,7 +394,7 @@ def generate_pre_derby_article(ctx: Dict[str, Any]) -> Dict[str, str]:
         "quotes, or recent form figures.\n\n"
         f"FIXTURE_FACTS:\n{json.dumps(ctx, default=str, ensure_ascii=False)}"
     )
-    return _call_openrouter(prompt)
+    return _call_gemini(prompt)
 
 
 # ---------------------------------------------------------------------------
