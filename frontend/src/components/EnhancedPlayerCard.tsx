@@ -57,10 +57,17 @@ const getRatingColor = (rating: number) => {
 
 export const EnhancedPlayerCard: React.FC<EnhancedPlayerCardProps> = ({ player }) => {
     const positionColor = getPositionColor(player.position);
-    // Use enhanced stats if available, otherwise fallback or random
-    const rating = player.stats?.rating ? Math.round(parseFloat(player.stats.rating) * 10) : (player.id % 15 + 70);
+    // Prefer the backend-computed overall_rating; fall back to api-football
+    // rating (10-point scale) or a deterministic id-based number so the UI
+    // never shows a random value.
+    const apiSportsRating = player.stats?.rating
+        ? Math.round(parseFloat(String(player.stats.rating)) * 10)
+        : null;
+    const rating = player.stats?.overall_rating ?? apiSportsRating ?? (player.id % 15 + 70);
     const goals = player.stats?.goals || 0;
     const assists = player.stats?.assists || 0;
+    const yellowCards = player.stats?.yellow_cards || 0;
+    const redCards = player.stats?.red_cards || 0;
 
     return (
         <div className="relative w-full max-w-sm mx-auto perspective-1000">
@@ -153,7 +160,7 @@ export const EnhancedPlayerCard: React.FC<EnhancedPlayerCardProps> = ({ player }
                         </div>
                         <div className="bg-white/5 rounded-lg p-2 text-center">
                             <div className="text-xs text-gray-400 uppercase font-bold mb-1">Rating</div>
-                            <div className={`text-xl font-bold ${getRatingColor(rating)}`}>{player.stats?.rating || '-'}</div>
+                            <div className={`text-xl font-bold ${getRatingColor(rating)}`}>{rating}</div>
                         </div>
                     </div>
 
@@ -167,6 +174,20 @@ export const EnhancedPlayerCard: React.FC<EnhancedPlayerCardProps> = ({ player }
                             <div className="bg-blue-500/20 px-3 py-1 rounded-full flex items-center gap-1">
                                 <Users2 className="w-3 h-3 text-blue-400" />
                                 <span className="text-xs font-bold text-blue-400">{assists} Assists</span>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Discipline */}
+                    {(yellowCards > 0 || redCards > 0) && (
+                        <div className="mt-3 flex justify-center gap-3 relative z-10">
+                            <div className="flex items-center gap-1.5 rounded-md bg-yellow-400/90 px-2.5 py-1 text-yellow-950 text-xs font-bold shadow">
+                                <span className="inline-block w-2.5 h-3 rounded-sm bg-yellow-700/80" aria-hidden="true" />
+                                {yellowCards} YC
+                            </div>
+                            <div className="flex items-center gap-1.5 rounded-md bg-red-500/90 px-2.5 py-1 text-white text-xs font-bold shadow">
+                                <span className="inline-block w-2.5 h-3 rounded-sm bg-red-800/80" aria-hidden="true" />
+                                {redCards} RC
                             </div>
                         </div>
                     )}

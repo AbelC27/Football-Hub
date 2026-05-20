@@ -2197,7 +2197,38 @@ def get_player_enhanced(player_id: int, db: Session = Depends(get_db)):
     player = db.query(Player).filter(Player.id == player_id).first()
     if not player:
         raise HTTPException(status_code=404, detail="Player not found")
-    
+
+    # ------------------------------------------------------------------
+    # Per-player card counts from MatchEvent (FPL-sourced rows).
+    # ------------------------------------------------------------------
+    card_rows = (
+        db.query(MatchEvent)
+        .filter(
+            MatchEvent.player_id == player.id,
+            MatchEvent.event_type == "Card",
+        )
+        .all()
+    )
+    yellow_cards_total = sum(
+        1 for row in card_rows if (row.detail or "").lower().startswith("yellow")
+    )
+    red_cards_total = sum(
+        1 for row in card_rows if (row.detail or "").lower().startswith("red")
+    )
+
+    # ------------------------------------------------------------------
+    # Derived overall rating (1..99 like FIFA/EA FC) when we don't have
+    # one from a paid source. The function lives in services/data_aggregator
+    # under enrich_player_data; we compute it here so the card can show a
+    # real, deterministic number.
+    # ------------------------------------------------------------------
+    derived_rating = _compute_overall_rating(
+        db,
+        player,
+        yellow_cards=yellow_cards_total,
+        red_cards=red_cards_total,
+    )
+
     # Base data from DB
     player_dict = {
         "id": player.id,
@@ -2213,15 +2244,28 @@ def get_player_enhanced(player_id: int, db: Session = Depends(get_db)):
             "goals": player.goals_season,
             "assists": player.assists_season,
             "rating": player.rating_season,
-            "minutes": player.minutes_played
+            "minutes": player.minutes_played,
+            "yellow_cards": yellow_cards_total,
+            "red_cards": red_cards_total,
+            "overall_rating": derived_rating,
         }
     }
-    
+
     # Enrich with external data
     # This will fetch from APIs if data is missing or if we want fresh data
     # For now, we just call the aggregator which handles the logic
     enriched = data_aggregator.enrich_player_data(player_dict)
-    
+
+    # Re-attach the card counts and overall rating in case the aggregator
+    # overwrote ``stats``. They are deterministic local computations and
+    # we always want them on the response.
+    if isinstance(enriched.get("stats"), dict):
+        enriched["stats"]["yellow_cards"] = yellow_cards_total
+        enriched["stats"]["red_cards"] = red_cards_total
+        enriched["stats"]["overall_rating"] = derived_rating
+    else:
+        enriched["stats"] = player_dict["stats"]
+
     # Get team info
     team = db.query(Team).filter(Team.id == player.team_id).first()
     enriched['team'] = {
@@ -2229,8 +2273,208 @@ def get_player_enhanced(player_id: int, db: Session = Depends(get_db)):
         "name": team.name,
         "logo_url": team.logo_url
     } if team else None
-    
+
     return enriched
+
+
+def _compute_overall_rating(
+    db: Session,
+    player: Player,
+    *,
+    yellow_cards: int = 0,
+    red_cards: int = 0,
+) -> int:
+    """
+    FIFA/EA FC-style overall rating in the 50..95 range, computed from
+    FPL signals (ICT index + points-per-game + total points) when
+    available, falling back to a goals/assists/minutes heuristic when
+    the player isn't an FPL element (e.g. non-PL squad rows).
+
+    The percentile rank is taken **within the player's position group**
+    so a defender isn't punished for not scoring like a forward. We blend:
+
+        50 + position_baseline_offset
+        + 25 * ict_percentile
+        +  8 * ppg_percentile
+        +  4 * total_points_percentile
+        -  card penalty
+
+    Result is deterministic per (player, FPL snapshot) pair.
+    """
+    pos_group = _resolve_position_group(player)
+
+    has_signals = (
+        player.fpl_ict_index is not None
+        or player.fpl_points_per_game is not None
+        or player.fpl_total_points is not None
+    )
+
+    if has_signals:
+        score = _compute_fpl_signal_rating(db, player, pos_group)
+    else:
+        score = _compute_heuristic_rating(player, pos_group)
+
+    score -= (yellow_cards * 0.15) + (red_cards * 1.2)
+    return max(50, min(95, int(round(score))))
+
+
+# ---------------------------------------------------------------------------
+# Position-group baselines and resolver
+# ---------------------------------------------------------------------------
+
+_POSITION_BASELINES = {
+    "GK": 62.0,
+    "DEF": 63.0,
+    "MID": 64.0,
+    "FWD": 64.0,
+}
+
+
+def _resolve_position_group(player: Player) -> str:
+    """Return one of GK/DEF/MID/FWD. Prefers the FPL element_type when set."""
+    et = getattr(player, "fpl_element_type", None)
+    if et == 1:
+        return "GK"
+    if et == 2:
+        return "DEF"
+    if et == 3:
+        return "MID"
+    if et == 4:
+        return "FWD"
+
+    pos = (player.position or "").lower()
+    if "goalkeeper" in pos:
+        return "GK"
+    if "back" in pos or "defender" in pos or "defence" in pos:
+        return "DEF"
+    if "midfield" in pos:
+        return "MID"
+    if "wing" in pos or "forward" in pos or "striker" in pos or "attack" in pos:
+        return "FWD"
+    return "MID"  # safe default
+
+
+# ---------------------------------------------------------------------------
+# Position cohort cache + percentile helpers
+# ---------------------------------------------------------------------------
+
+_PERCENTILE_CACHE: Dict[str, Any] = {
+    "built_at_monotonic": 0.0,
+    "ict": {"GK": [], "DEF": [], "MID": [], "FWD": []},
+    "ppg": {"GK": [], "DEF": [], "MID": [], "FWD": []},
+    "total_points": {"GK": [], "DEF": [], "MID": [], "FWD": []},
+}
+_PERCENTILE_CACHE_TTL_SECONDS = 60 * 60  # 1 hour
+
+
+def _ensure_percentile_cache(db: Session) -> None:
+    """Rebuild the per-position sorted-value lists if the cache is stale."""
+    import time as _time
+    now = _time.monotonic()
+    if (now - _PERCENTILE_CACHE["built_at_monotonic"]) <= _PERCENTILE_CACHE_TTL_SECONDS \
+            and _PERCENTILE_CACHE["ict"]["FWD"]:  # also require non-empty data
+        return
+
+    rows = (
+        db.query(
+            Player.fpl_element_type,
+            Player.position,
+            Player.fpl_ict_index,
+            Player.fpl_points_per_game,
+            Player.fpl_total_points,
+        )
+        .filter(Player.fpl_element_type.isnot(None))
+        .all()
+    )
+
+    buckets_ict: Dict[str, List[float]] = {"GK": [], "DEF": [], "MID": [], "FWD": []}
+    buckets_ppg: Dict[str, List[float]] = {"GK": [], "DEF": [], "MID": [], "FWD": []}
+    buckets_total: Dict[str, List[float]] = {"GK": [], "DEF": [], "MID": [], "FWD": []}
+
+    for et, pos, ict, ppg, total in rows:
+        # Build a shim so _resolve_position_group can use the same logic.
+        class _Shim:
+            pass
+        shim = _Shim()
+        shim.fpl_element_type = et
+        shim.position = pos
+        group = _resolve_position_group(shim)  # type: ignore[arg-type]
+
+        if ict is not None:
+            buckets_ict[group].append(float(ict))
+        if ppg is not None:
+            buckets_ppg[group].append(float(ppg))
+        if total is not None:
+            buckets_total[group].append(float(total))
+
+    for group in ("GK", "DEF", "MID", "FWD"):
+        buckets_ict[group].sort()
+        buckets_ppg[group].sort()
+        buckets_total[group].sort()
+
+    _PERCENTILE_CACHE["built_at_monotonic"] = now
+    _PERCENTILE_CACHE["ict"] = buckets_ict
+    _PERCENTILE_CACHE["ppg"] = buckets_ppg
+    _PERCENTILE_CACHE["total_points"] = buckets_total
+
+
+def _percentile_rank(sorted_values: List[float], target: Optional[float]) -> float:
+    """Return the percentile of ``target`` within ``sorted_values`` (0..1)."""
+    if target is None or not sorted_values:
+        return 0.0
+    # Linear scan is fine — buckets hold at most ~150 PL players per group.
+    below = 0
+    for value in sorted_values:
+        if value < target:
+            below += 1
+        else:
+            break
+    return below / len(sorted_values)
+
+
+def _compute_fpl_signal_rating(db: Session, player: Player, pos_group: str) -> float:
+    """Percentile-based rating using the FPL signal columns."""
+    _ensure_percentile_cache(db)
+
+    ict_pct = _percentile_rank(_PERCENTILE_CACHE["ict"][pos_group], player.fpl_ict_index)
+    ppg_pct = _percentile_rank(_PERCENTILE_CACHE["ppg"][pos_group], player.fpl_points_per_game)
+    total_pct = _percentile_rank(_PERCENTILE_CACHE["total_points"][pos_group], player.fpl_total_points)
+
+    baseline = _POSITION_BASELINES[pos_group]
+    return (
+        baseline
+        + 25.0 * ict_pct
+        + 8.0 * ppg_pct
+        + 4.0 * total_pct
+    )
+
+
+# ---------------------------------------------------------------------------
+# Fallback heuristic when FPL signals are missing
+# ---------------------------------------------------------------------------
+
+_HEURISTIC_WEIGHTS = {
+    "GK": (6.0, 3.0),
+    "DEF": (4.5, 2.0),
+    "MID": (2.2, 1.6),
+    "FWD": (1.4, 1.4),
+}
+
+
+def _compute_heuristic_rating(player: Player, pos_group: str) -> float:
+    """Fallback for non-PL players (no FPL signals): use raw counting stats."""
+    weight_goals, weight_assists = _HEURISTIC_WEIGHTS[pos_group]
+    baseline = _POSITION_BASELINES[pos_group] + 2.0  # nudge so heuristic rows aren't all stuck low
+
+    goals = player.goals_season or 0
+    assists = player.assists_season or 0
+    minutes = player.minutes_played or 0
+
+    minutes_bonus = min(minutes / 200.0, 12.0)
+    goals_bonus = min(goals * weight_goals, 18.0)
+    assists_bonus = min(assists * weight_assists, 10.0)
+
+    return baseline + minutes_bonus + goals_bonus + assists_bonus
 
 @router.get("/teams/{team_id}/statistics")
 def get_team_statistics(team_id: int, db: Session = Depends(get_db)):

@@ -653,6 +653,9 @@ export interface PlayerDetailed {
     assists?: number;
     rating?: number;
     minutes?: number;
+    yellow_cards?: number;
+    red_cards?: number;
+    overall_rating?: number;
   };
 }
 

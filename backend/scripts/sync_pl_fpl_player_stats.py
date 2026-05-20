@@ -10,9 +10,20 @@ don't pile on at the same time).
 
 What gets updated:
 
+Counting stats:
 * ``Player.goals_season`` <- ``element.goals_scored``
 * ``Player.assists_season`` <- ``element.assists``
 * ``Player.minutes_played`` <- ``element.minutes``
+
+FPL signal fields (used to compute the overall rating):
+* ``Player.fpl_total_points``    <- ``element.total_points``
+* ``Player.fpl_points_per_game`` <- ``element.points_per_game``
+* ``Player.fpl_form``            <- ``element.form``
+* ``Player.fpl_ict_index``       <- ``element.ict_index``
+* ``Player.fpl_influence``       <- ``element.influence``
+* ``Player.fpl_creativity``      <- ``element.creativity``
+* ``Player.fpl_threat``          <- ``element.threat``
+* ``Player.fpl_element_type``    <- ``element.element_type`` (1=GK 2=DEF 3=MID 4=FWD)
 
 ``Player.rating_season`` is NOT touched — FPL doesn't surface a season rating
 and we don't want to clobber anything api-sports may have populated.
@@ -53,21 +64,38 @@ def _to_int(value: Any) -> Optional[int]:
         return None
 
 
+def _to_float(value: Any) -> Optional[float]:
+    if value is None or value == "":
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
 def _apply_stats(player: Player, element: Dict[str, Any]) -> bool:
-    new_goals = _to_int(element.get("goals_scored"))
-    new_assists = _to_int(element.get("assists"))
-    new_minutes = _to_int(element.get("minutes"))
+    """Apply both raw stats and FPL signal fields to a Player row."""
+    new_values: Dict[str, Any] = {
+        "goals_season": _to_int(element.get("goals_scored")),
+        "assists_season": _to_int(element.get("assists")),
+        "minutes_played": _to_int(element.get("minutes")),
+        "fpl_total_points": _to_int(element.get("total_points")),
+        "fpl_points_per_game": _to_float(element.get("points_per_game")),
+        "fpl_form": _to_float(element.get("form")),
+        "fpl_ict_index": _to_float(element.get("ict_index")),
+        "fpl_influence": _to_float(element.get("influence")),
+        "fpl_creativity": _to_float(element.get("creativity")),
+        "fpl_threat": _to_float(element.get("threat")),
+        "fpl_element_type": _to_int(element.get("element_type")),
+    }
 
     changed = False
-    if new_goals is not None and new_goals != player.goals_season:
-        player.goals_season = new_goals
-        changed = True
-    if new_assists is not None and new_assists != player.assists_season:
-        player.assists_season = new_assists
-        changed = True
-    if new_minutes is not None and new_minutes != player.minutes_played:
-        player.minutes_played = new_minutes
-        changed = True
+    for attr, value in new_values.items():
+        if value is None:
+            continue
+        if getattr(player, attr) != value:
+            setattr(player, attr, value)
+            changed = True
 
     return changed
 

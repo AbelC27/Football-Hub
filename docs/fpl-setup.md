@@ -55,10 +55,19 @@ Total network calls: **1** (a single `bootstrap-static` fetch).
 
 ## 3. Daily player stats sync (**1 call**)
 
-Updates `players.goals_season`, `assists_season`, and `minutes_played`
-from the FPL `bootstrap-static` `elements[]`. `players.rating_season` is
-left alone — FPL does not surface a rating, and we don't want to clobber
-any value api-sports may have populated.
+Updates `players.goals_season`, `assists_season`, `minutes_played`, plus
+the FPL signal columns used for the overall rating
+(`fpl_total_points`, `fpl_points_per_game`, `fpl_form`, `fpl_ict_index`,
+`fpl_influence`, `fpl_creativity`, `fpl_threat`, `fpl_element_type`).
+`players.rating_season` is left alone — FPL does not surface a rating
+on a 0–10 scale, and we don't want to clobber any value api-sports may
+have populated.
+
+> **First run:** apply the FPL signal-fields migration once before
+> running this script. Paste the contents of
+> `backend/scripts/migrations/2026_05_fpl_player_signals.sql` into the
+> Supabase SQL editor and run it. The migration is idempotent and only
+> adds nullable columns to `players`.
 
 ```bash
 cd backend

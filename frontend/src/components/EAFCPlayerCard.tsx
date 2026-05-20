@@ -40,17 +40,48 @@ const getPositionAbbr = (position: string) => {
     return position.split(' ').map(w => w[0]).join('').toUpperCase().slice(0, 3);
 };
 
-// Generate a pseudo-rating based on position (for demo purposes)
-const generateRating = (position: string) => {
-    const base = 70;
-    const random = Math.floor(Math.random() * 15);
-    return base + random;
+// Same heuristic the backend uses, mirrored here so the card has a sensible
+// number even if the /enhanced endpoint hasn't responded yet.
+const computeOverallRating = (player: PlayerDetailed): number => {
+    const stats = player.stats || {};
+    const pos = (player.position || '').toLowerCase();
+    const goals = stats.goals ?? 0;
+    const assists = stats.assists ?? 0;
+    const minutes = stats.minutes ?? 0;
+    const yellows = stats.yellow_cards ?? 0;
+    const reds = stats.red_cards ?? 0;
+
+    let baseline = 64;
+    let weightGoals = 1.8;
+    let weightAssists = 1.5;
+    if (pos.includes('goalkeeper')) {
+        baseline = 64; weightGoals = 6.0; weightAssists = 3.0;
+    } else if (pos.includes('back') || pos.includes('defender')) {
+        baseline = 65; weightGoals = 4.5; weightAssists = 2.0;
+    } else if (pos.includes('midfield')) {
+        baseline = 66; weightGoals = 2.2; weightAssists = 1.6;
+    } else if (pos.includes('winger') || pos.includes('forward') || pos.includes('striker')) {
+        baseline = 65; weightGoals = 1.4; weightAssists = 1.4;
+    }
+    const minutesBonus = Math.min(minutes / 200, 12);
+    const goalsBonus = Math.min(goals * weightGoals, 18);
+    const assistsBonus = Math.min(assists * weightAssists, 10);
+    const cardPenalty = (yellows * 0.15) + (reds * 1.2);
+    const score = baseline + minutesBonus + goalsBonus + assistsBonus - cardPenalty;
+    return Math.max(50, Math.min(95, Math.round(score)));
 };
 
 export const EAFCPlayerCard: React.FC<EAFCPlayerCardProps> = ({ player }) => {
     const colors = getPositionColor(player.position);
     const positionAbbr = getPositionAbbr(player.position);
-    const rating = generateRating(player.position);
+
+    const stats = player.stats || {};
+    const rating = stats.overall_rating ?? computeOverallRating(player);
+    const goals = stats.goals ?? 0;
+    const assists = stats.assists ?? 0;
+    const yellowCards = stats.yellow_cards ?? 0;
+    const redCards = stats.red_cards ?? 0;
+    const minutes = stats.minutes ?? 0;
 
     return (
         <div className="relative w-full max-w-sm mx-auto perspective-1000">
@@ -95,7 +126,15 @@ export const EAFCPlayerCard: React.FC<EAFCPlayerCardProps> = ({ player }) => {
                             {/* Player Photo Placeholder */}
                             <div className="flex justify-center mb-6">
                                 <div className="w-32 h-32 bg-white/10 backdrop-blur rounded-full flex items-center justify-center border-4 border-white/20">
-                                    <User className="w-16 h-16 text-white/50" />
+                                    {player.photo_url ? (
+                                        <img
+                                            src={player.photo_url}
+                                            alt={player.name}
+                                            className="w-full h-full rounded-full object-cover"
+                                        />
+                                    ) : (
+                                        <User className="w-16 h-16 text-white/50" />
+                                    )}
                                 </div>
                             </div>
 
@@ -106,7 +145,35 @@ export const EAFCPlayerCard: React.FC<EAFCPlayerCardProps> = ({ player }) => {
                                 </h2>
                             </div>
 
-                            {/* Stats Grid */}
+                            {/* Season Stats Row: Goals · Assists · Minutes */}
+                            <div className="grid grid-cols-3 gap-2 mb-4 rounded-xl bg-white/10 px-3 py-3">
+                                <div className="text-center">
+                                    <div className="text-[10px] uppercase tracking-wide text-white/70 font-semibold">Goals</div>
+                                    <div className="text-2xl font-black text-white">{goals}</div>
+                                </div>
+                                <div className="text-center border-x border-white/15">
+                                    <div className="text-[10px] uppercase tracking-wide text-white/70 font-semibold">Assists</div>
+                                    <div className="text-2xl font-black text-white">{assists}</div>
+                                </div>
+                                <div className="text-center">
+                                    <div className="text-[10px] uppercase tracking-wide text-white/70 font-semibold">Mins</div>
+                                    <div className="text-2xl font-black text-white">{minutes}</div>
+                                </div>
+                            </div>
+
+                            {/* Cards row */}
+                            <div className="flex items-center justify-center gap-4 mb-4">
+                                <div className="flex items-center gap-1.5 rounded-md bg-yellow-400/90 px-2.5 py-1 text-yellow-950 text-xs font-bold shadow">
+                                    <span className="inline-block w-2.5 h-3 rounded-sm bg-yellow-700/80" aria-hidden="true" />
+                                    {yellowCards} YC
+                                </div>
+                                <div className="flex items-center gap-1.5 rounded-md bg-red-500/90 px-2.5 py-1 text-white text-xs font-bold shadow">
+                                    <span className="inline-block w-2.5 h-3 rounded-sm bg-red-800/80" aria-hidden="true" />
+                                    {redCards} RC
+                                </div>
+                            </div>
+
+                            {/* Bio Grid */}
                             <div className="grid grid-cols-3 gap-4 mb-4">
                                 {/* Nationality */}
                                 <div className="text-center">

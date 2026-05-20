@@ -57,6 +57,17 @@ class Player(Base):
     rating_season = Column(Float, nullable=True)
     minutes_played = Column(Integer, nullable=True)
 
+    # FPL signal fields (used to compute the EA-FC-style overall rating).
+    # All nullable; only PL players sourced from FPL will have them set.
+    fpl_total_points = Column(Integer, nullable=True)
+    fpl_points_per_game = Column(Float, nullable=True)
+    fpl_form = Column(Float, nullable=True)
+    fpl_ict_index = Column(Float, nullable=True)
+    fpl_influence = Column(Float, nullable=True)
+    fpl_creativity = Column(Float, nullable=True)
+    fpl_threat = Column(Float, nullable=True)
+    fpl_element_type = Column(Integer, nullable=True)  # 1=GK, 2=DEF, 3=MID, 4=FWD
+
 class Match(Base):
     __tablename__ = "matches"
     id = Column(Integer, primary_key=True, index=True)
