@@ -4,7 +4,7 @@ Add Ligue 1 to the database
 from services.football_data_org import (
     fetch_competitions,
     fetch_competition_teams,
-    fetch_competition_matches,
+    fetch_competition_season_matches,
     fetch_competition_standings,
     parse_team_from_fd,
     parse_match_from_fd,
@@ -126,7 +126,7 @@ if standings_data:
 
 # Fetch and add matches
 print("\nFetching matches...")
-all_matches = fetch_competition_matches('FL1')
+all_matches = fetch_competition_season_matches('FL1')
 print(f"Found {len(all_matches)} matches from API")
 
 fixtures_added = 0

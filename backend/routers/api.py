@@ -1023,29 +1023,132 @@ def get_leagues(db: Session = Depends(get_db)):
     return leagues
 
 @router.get("/live-matches")
-def get_live_matches(db: Session = Depends(get_db)):
+def get_live_matches(
+    db: Session = Depends(get_db),
+    league_id: Optional[int] = Query(None, description="Filter to a specific league id"),
+    status: Optional[str] = Query(
+        None,
+        description=(
+            "Filter by status group: 'live', 'upcoming', 'finished', or a comma-"
+            "separated list of raw codes (e.g. 'FT,AET'). Default returns all."
+        ),
+    ),
+    date_from: Optional[str] = Query(None, description="Inclusive lower bound, YYYY-MM-DD"),
+    date_to: Optional[str] = Query(None, description="Inclusive upper bound, YYYY-MM-DD"),
+    days_back: Optional[int] = Query(None, ge=0, description="Shortcut: include matches from N days ago"),
+    days_forward: Optional[int] = Query(None, ge=0, description="Shortcut: include matches up to N days ahead"),
+    limit: int = Query(30, ge=1, le=200, description="Page size, default 30, max 200"),
+    offset: int = Query(0, ge=0, description="Number of rows to skip for pagination"),
+    order: str = Query("asc", pattern="^(asc|desc)$", description="Sort by kickoff: asc or desc"),
+):
+    """
+    Return matches for the configured leagues, paginated.
+
+    Without a `status` filter, returns the entire dataset (paginated). The
+    `status` argument accepts the friendly groups `live`, `upcoming`,
+    `finished`, or a raw comma-separated list of status codes.
+
+    Response shape:
+        {
+            "items": [Match, ...],
+            "total": 1234,
+            "limit": 30,
+            "offset": 0,
+            "has_more": true
+        }
+    """
+    status_groups = {
+        "live": ["LIVE", "HT", "ET", "P", "1H", "2H"],
+        "upcoming": ["NS", "TBD", "PST", "SUSP"],
+        "finished": ["FT", "AET", "PEN"],
+    }
+    all_known_statuses = ["LIVE", "HT", "ET", "P", "1H", "2H", "NS", "TBD", "PST", "SUSP", "FT", "AET", "PEN"]
+
+    if status:
+        normalized = status.strip().lower()
+        if normalized in status_groups:
+            wanted_statuses = status_groups[normalized]
+        else:
+            wanted_statuses = [s.strip().upper() for s in status.split(",") if s.strip()]
+    else:
+        wanted_statuses = all_known_statuses
+
+    query = db.query(Match).filter(Match.status.in_(wanted_statuses))
+
+    # Resolve the requested time window. No defaults: caller decides whether
+    # to narrow by date. The pagination keeps the response cheap regardless.
+    window_start = None
+    window_end = None
     now_utc = datetime.datetime.utcnow()
-    window_start = now_utc - datetime.timedelta(days=7)
-    window_end = now_utc + datetime.timedelta(days=14)
 
-    statuses = ['LIVE', 'HT', 'ET', 'P', 'NS', 'TBD', 'PST', 'FT', 'AET', 'PEN']
+    if days_back is not None:
+        window_start = now_utc - datetime.timedelta(days=days_back)
+    if days_forward is not None:
+        window_end = now_utc + datetime.timedelta(days=days_forward)
 
+    if date_from:
+        try:
+            window_start = datetime.datetime.strptime(date_from, "%Y-%m-%d")
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=f"Invalid date_from: {exc}")
+    if date_to:
+        try:
+            # Make date_to inclusive of the entire day.
+            window_end = datetime.datetime.strptime(date_to, "%Y-%m-%d") + datetime.timedelta(days=1)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=f"Invalid date_to: {exc}")
+
+    if window_start is not None:
+        query = query.filter(Match.start_time >= window_start)
+    if window_end is not None:
+        query = query.filter(Match.start_time <= window_end)
+
+    if league_id is not None:
+        # Match either explicit league_id on Match or via home team membership.
+        query = query.outerjoin(Team, Team.id == Match.home_team_id).filter(
+            or_(Match.league_id == league_id, Team.league_id == league_id)
+        )
+
+    total = query.with_entities(Match.id).count()
+
+    sort_column = Match.start_time.asc() if order == "asc" else Match.start_time.desc()
     matches = (
-        db.query(Match)
-        .filter(Match.status.in_(statuses))
-        .filter(Match.start_time >= window_start)
-        .filter(Match.start_time <= window_end)
-        .order_by(Match.start_time.asc())
+        query.order_by(sort_column, Match.id.asc())
+        .offset(offset)
+        .limit(limit)
         .all()
     )
-    
-    # Enrich matches with team data
-    enriched_matches = []
+
+    if not matches:
+        return {
+            "items": [],
+            "total": total,
+            "limit": limit,
+            "offset": offset,
+            "has_more": False,
+        }
+
+    # Bulk-fetch every team referenced by the matches in a single query
+    # instead of doing 2 round-trips per match (N+1). With a remote Supabase
+    # pooler this is the difference between sub-second and 30+ seconds.
+    team_ids = set()
     for match in matches:
-        home_team = db.query(Team).filter(Team.id == match.home_team_id).first()
-        away_team = db.query(Team).filter(Team.id == match.away_team_id).first()
-        
-        match_dict = {
+        if match.home_team_id is not None:
+            team_ids.add(match.home_team_id)
+        if match.away_team_id is not None:
+            team_ids.add(match.away_team_id)
+
+    teams_by_id = {
+        team.id: team
+        for team in db.query(Team).filter(Team.id.in_(team_ids)).all()
+    } if team_ids else {}
+
+    items = []
+    for match in matches:
+        home_team = teams_by_id.get(match.home_team_id)
+        away_team = teams_by_id.get(match.away_team_id)
+
+        items.append({
             "id": match.id,
             "start_time": match.start_time,
             "status": match.status,
@@ -1058,11 +1161,16 @@ def get_live_matches(db: Session = Depends(get_db)):
             "home_team_logo": home_team.logo_url if home_team else None,
             "away_team_logo": away_team.logo_url if away_team else None,
             "league_id": match.league_id if match.league_id else (home_team.league_id if home_team else None),
-            "prediction": match.prediction
-        }
-        enriched_matches.append(match_dict)
-    
-    return enriched_matches
+            "prediction": match.prediction,
+        })
+
+    return {
+        "items": items,
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+        "has_more": offset + len(items) < total,
+    }
 
 @router.get("/match/{match_id}/details")
 def get_match_details(match_id: int, db: Session = Depends(get_db)):

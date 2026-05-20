@@ -69,14 +69,14 @@ def seed_teams_and_fixtures_live(db: Session, leagues_data: list):
         
         print(f"\n{league_name}:")
         
-        # Fetch recent fixtures (last 7 days)
-        print("  Fetching recent fixtures (last 7 days)...")
-        recent = fetch_recent_fixtures(league_id, count=10)  # count is ignored, uses date range
+        # Fetch finished/in-progress fixtures for the season
+        print("  Fetching recent fixtures (full season)...")
+        recent = fetch_recent_fixtures(league_id)
         print(f"  ✓ Got {len(recent)} recent fixtures")
-        
-        # Fetch upcoming fixtures (next 7 days)
-        print("  Fetching upcoming fixtures (next 7 days)...")
-        upcoming = fetch_upcoming_fixtures(league_id, count=10)  # count is ignored, uses date range
+
+        # Fetch upcoming fixtures for the season
+        print("  Fetching upcoming fixtures (full season)...")
+        upcoming = fetch_upcoming_fixtures(league_id)
         print(f"  ✓ Got {len(upcoming)} upcoming fixtures")
         
         # Combine all fixtures

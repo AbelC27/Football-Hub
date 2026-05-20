@@ -72,21 +72,27 @@ try:
             # Process teams and matches
             teams_added = 0
             matches_added = 0
+            skipped = 0
             team_cache = {}
-            
-            print("\n[5/5] Processing matches and teams...")
-            # Limit to 100 matches to avoid overwhelming the database
-            for i, event in enumerate(events[:100]):
+
+            # Sort events chronologically so partial runs cover the earliest
+            # fixtures first and progress is easy to reason about.
+            events.sort(key=lambda e: (e.get('dateEvent') or '', e.get('strTime') or ''))
+
+            total_events = len(events)
+            print(f"\n[5/5] Processing {total_events} matches and teams...")
+            for i, event in enumerate(events):
                 try:
                     # Extract team IDs and names
                     home_team_id = event.get('idHomeTeam')
                     away_team_id = event.get('idAwayTeam')
                     home_team_name = event.get('strHomeTeam')
                     away_team_name = event.get('strAwayTeam')
-                    
+
                     if not home_team_id or not away_team_id:
+                        skipped += 1
                         continue
-                    
+
                     home_team_id = int(home_team_id)
                     away_team_id = int(away_team_id)
                     
@@ -121,38 +127,47 @@ try:
                         team_cache[away_team_id] = True
                     
                     # Add match
-                    match_id = int(event['idEvent'])
+                    match_id_raw = event.get('idEvent')
+                    if not match_id_raw:
+                        skipped += 1
+                        continue
+                    match_id = int(match_id_raw)
                     existing_match = db.query(Match).filter(Match.id == match_id).first()
-                    
+
                     if not existing_match:
                         # Parse date
                         date_str = event.get('dateEvent')
                         time_str = event.get('strTime', '20:00:00')
-                        
-                        if date_str:
-                            try:
-                                if time_str and time_str != '':
-                                    dt = datetime.datetime.strptime(f"{date_str} {time_str}", "%Y-%m-%d %H:%M:%S")
-                                else:
-                                    dt = datetime.datetime.strptime(date_str, "%Y-%m-%d")
-                            except:
-                                dt = datetime.datetime.strptime(date_str, "%Y-%m-%d")
-                        else:
+
+                        if not date_str:
+                            skipped += 1
                             continue
-                        
+
+                        try:
+                            if time_str:
+                                dt = datetime.datetime.strptime(f"{date_str} {time_str}", "%Y-%m-%d %H:%M:%S")
+                            else:
+                                dt = datetime.datetime.strptime(date_str, "%Y-%m-%d")
+                        except ValueError:
+                            try:
+                                dt = datetime.datetime.strptime(date_str, "%Y-%m-%d")
+                            except ValueError:
+                                skipped += 1
+                                continue
+
                         # Parse scores
-                        home_score = int(event['intHomeScore']) if event.get('intHomeScore') and event['intHomeScore'] else None
-                        away_score = int(event['intAwayScore']) if event.get('intAwayScore') and event['intAwayScore'] else None
-                        
+                        home_score = int(event['intHomeScore']) if event.get('intHomeScore') not in (None, '') else None
+                        away_score = int(event['intAwayScore']) if event.get('intAwayScore') not in (None, '') else None
+
                         # Determine status
-                        status = event.get('strStatus', 'NS')
-                        if 'Finished' in status or status == 'FT':
+                        raw_status = event.get('strStatus', 'NS') or 'NS'
+                        if 'Finished' in raw_status or raw_status == 'FT':
                             status = 'FT'
-                        elif 'Not Started' in status or not home_score:
+                        elif 'Not Started' in raw_status or home_score is None:
                             status = 'NS'
                         else:
                             status = 'LIVE'
-                        
+
                         new_match = Match(
                             id=match_id,
                             home_team_id=home_team_id,
@@ -164,18 +179,21 @@ try:
                         )
                         db.add(new_match)
                         matches_added += 1
-                    
-                    if (i + 1) % 20 == 0:
-                        print(f"  Processed {i + 1}/{min(100, len(events))} matches...")
+
+                    if (i + 1) % 25 == 0:
+                        print(f"  Processed {i + 1}/{total_events} matches...")
                         db.flush()  # Flush periodically
-                        
+
                 except Exception as e:
                     print(f"  ⚠️  Error processing event {i+1}: {e}")
+                    skipped += 1
                     continue
-            
+
             db.commit()
             print(f"\n✓ Added {teams_added} teams")
             print(f"✓ Added {matches_added} matches")
+            if skipped:
+                print(f"  (skipped {skipped} events with missing/invalid data)")
         else:
             print("⚠️  No matches found for 2024-2025 season")
             print("  Trying previous season...")

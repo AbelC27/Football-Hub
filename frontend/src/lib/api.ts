@@ -253,10 +253,55 @@ export async function getLeagues(): Promise<League[]> {
   return res.json();
 }
 
-export async function getLiveMatches(): Promise<Match[]> {
-  const res = await fetch(`${API_BASE_URL}/live-matches`);
+export type MatchStatusGroup = "live" | "upcoming" | "finished";
+
+export interface PaginatedMatches {
+  items: Match[];
+  total: number;
+  limit: number;
+  offset: number;
+  has_more: boolean;
+}
+
+export interface GetLiveMatchesParams {
+  status?: MatchStatusGroup | string;
+  leagueId?: number;
+  limit?: number;
+  offset?: number;
+  order?: "asc" | "desc";
+  daysBack?: number;
+  daysForward?: number;
+  signal?: AbortSignal;
+}
+
+export async function getLiveMatches(
+  params: GetLiveMatchesParams = {}
+): Promise<PaginatedMatches> {
+  const search = new URLSearchParams();
+  if (params.status) search.set("status", params.status);
+  if (typeof params.leagueId === "number") search.set("league_id", String(params.leagueId));
+  if (typeof params.limit === "number") search.set("limit", String(params.limit));
+  if (typeof params.offset === "number") search.set("offset", String(params.offset));
+  if (params.order) search.set("order", params.order);
+  if (typeof params.daysBack === "number") search.set("days_back", String(params.daysBack));
+  if (typeof params.daysForward === "number") search.set("days_forward", String(params.daysForward));
+
+  const suffix = search.toString() ? `?${search.toString()}` : "";
+  const res = await fetch(`${API_BASE_URL}/live-matches${suffix}`, { signal: params.signal });
   if (!res.ok) throw new Error("Failed to fetch live matches");
-  return res.json();
+
+  const payload = await res.json();
+  // Backwards compatibility: older builds returned a bare array.
+  if (Array.isArray(payload)) {
+    return {
+      items: payload as Match[],
+      total: payload.length,
+      limit: payload.length,
+      offset: 0,
+      has_more: false,
+    };
+  }
+  return payload as PaginatedMatches;
 }
 
 export async function getMatchExperience(matchId: number): Promise<MatchExperience> {

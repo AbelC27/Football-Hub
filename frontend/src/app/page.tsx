@@ -1,15 +1,43 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Match, getLiveMatches, getLeagues, League } from '@/lib/api';
 import { EnhancedMatchCard } from '@/components/EnhancedMatchCard';
 import { StandingsTable } from '@/components/StandingsTable';
 import { LeagueSelector } from '@/components/LeagueSelector';
 import { LoadingSpinner } from '@/components/LoadingSpinner';
 import { NewsSidebar } from '@/components/NewsSidebar';
-import { Calendar, Clock, Trophy, Activity, Sparkles } from 'lucide-react';
+import { Calendar, Clock, Trophy, Activity, Sparkles, Loader2 } from 'lucide-react';
 
 type TabType = 'live' | 'upcoming' | 'finished' | 'standings';
+type MatchTab = Exclude<TabType, 'standings'>;
+
+const PAGE_SIZE = 30;
+const LIVE_POLL_MS = 30_000;
+
+interface TabState {
+    items: Match[];
+    total: number;
+    loadedKey: string | null;
+    loading: boolean;
+    error: string | null;
+    hasMore: boolean;
+}
+
+const emptyTabState: TabState = {
+    items: [],
+    total: 0,
+    loadedKey: null,
+    loading: false,
+    error: null,
+    hasMore: true,
+};
+
+const tabOrder: Record<MatchTab, 'asc' | 'desc'> = {
+    live: 'asc',
+    upcoming: 'asc',
+    finished: 'desc',
+};
 
 const getLeagueDedupKey = (league: League) => {
     const normalizedName = league.name.trim().toLowerCase();
@@ -19,120 +47,301 @@ const getLeagueDedupKey = (league: League) => {
 
 const dedupeLeagues = (leagues: League[]): League[] => {
     const seen = new Set<string>();
-
     return leagues.filter((league) => {
         const key = getLeagueDedupKey(league);
-        if (seen.has(key)) {
-            return false;
-        }
-
+        if (seen.has(key)) return false;
         seen.add(key);
         return true;
     });
 };
 
 export default function Home() {
-    const [matches, setMatches] = useState<Match[]>([]);
     const [leagues, setLeagues] = useState<League[]>([]);
     const [selectedLeague, setSelectedLeague] = useState<number | null>(null);
-    const [activeTab, setActiveTab] = useState<TabType>('live');
-    const [loading, setLoading] = useState(true);
+    const [activeTab, setActiveTab] = useState<TabType>('upcoming');
+    const [bootstrapping, setBootstrapping] = useState(true);
 
+    const [tabStates, setTabStates] = useState<Record<MatchTab, TabState>>({
+        live: { ...emptyTabState },
+        upcoming: { ...emptyTabState },
+        finished: { ...emptyTabState },
+    });
+
+    // Mirror the latest tab states into a ref so effects/callbacks can read
+    // them without listing them as dependencies (which would loop).
+    const tabStatesRef = useRef(tabStates);
     useEffect(() => {
-        const fetchData = async () => {
+        tabStatesRef.current = tabStates;
+    }, [tabStates]);
+
+    // Build a unique key per (tab, league) so we know when to refetch.
+    const buildKey = useCallback((tab: MatchTab, leagueId: number | null) => {
+        return `${tab}:${leagueId ?? 'all'}`;
+    }, []);
+
+    // Fetch totals for every tab whenever the league changes. Keeps the
+    // count badges accurate without paying for full match payloads.
+    useEffect(() => {
+        if (!selectedLeague) return;
+
+        const tabs: MatchTab[] = ['live', 'upcoming', 'finished'];
+        const aborter = new AbortController();
+
+        Promise.all(
+            tabs.map((tab) =>
+                getLiveMatches({
+                    status: tab,
+                    leagueId: selectedLeague,
+                    limit: 1,
+                    offset: 0,
+                    signal: aborter.signal,
+                }).then((res) => ({ tab, total: res.total }))
+            )
+        )
+            .then((results) => {
+                setTabStates((prev) => {
+                    const next = { ...prev };
+                    for (const { tab, total } of results) {
+                        next[tab] = { ...next[tab], total };
+                    }
+                    return next;
+                });
+            })
+            .catch((err) => {
+                if (err?.name !== 'AbortError') console.error(err);
+            });
+
+        return () => aborter.abort();
+    }, [selectedLeague]);
+
+    // Initial bootstrap: leagues + first-page upcoming matches for the
+    // default league so the page renders something quickly.
+    useEffect(() => {
+        let cancelled = false;
+
+        const bootstrap = async () => {
             try {
-                const [matchesData, leaguesData] = await Promise.all([
-                    getLiveMatches(),
-                    getLeagues()
-                ]);
+                const leaguesData = await getLeagues();
+                if (cancelled) return;
 
                 const uniqueLeagues = dedupeLeagues(leaguesData);
-                setMatches(matchesData);
                 setLeagues(uniqueLeagues);
 
-                // Set default league if available
                 if (uniqueLeagues.length > 0) {
-                    const pl = uniqueLeagues.find(l => l.name.trim().toLowerCase() === 'premier league');
-
-                    if (!selectedLeague) {
-                        setSelectedLeague(pl ? pl.id : uniqueLeagues[0].id);
-                    } else if (!uniqueLeagues.some(l => l.id === selectedLeague)) {
-                        setSelectedLeague(pl ? pl.id : uniqueLeagues[0].id);
-                    }
+                    const pl = uniqueLeagues.find(
+                        (l) => l.name.trim().toLowerCase() === 'premier league'
+                    );
+                    setSelectedLeague(pl ? pl.id : uniqueLeagues[0].id);
                 }
-
-                // Auto-select tab based on available matches
-                const hasLive = matchesData.some(m => ['LIVE', 'HT', 'ET', 'P'].includes(m.status));
-                if (hasLive && activeTab !== 'live') setActiveTab('live');
             } catch (error) {
                 console.error(error);
             } finally {
-                setLoading(false);
+                if (!cancelled) setBootstrapping(false);
             }
         };
-        fetchData();
 
-        // Poll for live matches every 30 seconds
-        const interval = setInterval(() => {
-            getLiveMatches()
-                .then(matchesData => {
-                    setMatches(matchesData);
-                })
-                .catch(console.error);
-        }, 30000); // 30 seconds
-
-        return () => clearInterval(interval);
+        bootstrap();
+        return () => {
+            cancelled = true;
+        };
     }, []);
 
-    // Filter matches by selected league and tab
-    const filteredMatches = matches.filter(match => {
-        // Filter by league
-        if (selectedLeague && match.league_id && match.league_id !== selectedLeague) {
-            return false;
+    // Fetch first page for the active tab whenever tab or league changes.
+    useEffect(() => {
+        if (activeTab === 'standings' || !selectedLeague) return;
+        const tab = activeTab as MatchTab;
+        const key = buildKey(tab, selectedLeague);
+
+        // Avoid re-fetching when we already have data for this (tab, league).
+        const current = tabStatesRef.current[tab];
+        if (current.loadedKey === key && current.items.length > 0) {
+            return;
         }
 
-        // Filter by status/tab
-        if (activeTab === 'live') return ['LIVE', 'HT', 'ET', 'P'].includes(match.status);
-        if (activeTab === 'upcoming') return ['NS', 'TBD', 'PST'].includes(match.status);
-        if (activeTab === 'finished') return ['FT', 'AET', 'PEN'].includes(match.status);
-        return false;
-    });
+        const aborter = new AbortController();
 
-    // Group matches by date
-    const groupedMatches = filteredMatches.reduce((acc, match) => {
-        const date = new Date(match.start_time).toLocaleDateString(undefined, {
-            weekday: 'long', year: 'numeric', month: 'long', day: 'numeric'
-        });
-        if (!acc[date]) acc[date] = [];
-        acc[date].push(match);
-        return acc;
-    }, {} as Record<string, Match[]>);
+        setTabStates((prev) => ({
+            ...prev,
+            [tab]: { ...emptyTabState, loading: true, total: prev[tab].total },
+        }));
 
-    // Sort dates
-    const sortedDates = Object.keys(groupedMatches).sort((a, b) => {
-        return new Date(a).getTime() - new Date(b).getTime();
-    });
+        getLiveMatches({
+            status: tab,
+            leagueId: selectedLeague,
+            limit: PAGE_SIZE,
+            offset: 0,
+            order: tabOrder[tab],
+            signal: aborter.signal,
+        })
+            .then((res) => {
+                setTabStates((prev) => ({
+                    ...prev,
+                    [tab]: {
+                        items: res.items,
+                        total: res.total,
+                        loadedKey: key,
+                        loading: false,
+                        error: null,
+                        hasMore: res.has_more,
+                    },
+                }));
+            })
+            .catch((err) => {
+                if (err?.name === 'AbortError') return;
+                console.error(err);
+                setTabStates((prev) => ({
+                    ...prev,
+                    [tab]: { ...prev[tab], loading: false, error: 'Could not load matches.' },
+                }));
+            });
 
-    if (activeTab === 'finished') {
-        sortedDates.reverse();
-    }
+        return () => aborter.abort();
+    }, [activeTab, selectedLeague, buildKey]);
 
-    const TabButton = ({ id, label, icon: Icon, count }: { id: TabType, label: string, icon: any, count?: number }) => (
+    // Poll the live tab every 30s so scores stay fresh. Only re-fetches the
+    // first page; the user can still scroll for more if they want.
+    useEffect(() => {
+        if (activeTab !== 'live' || !selectedLeague) return;
+
+        const interval = setInterval(() => {
+            getLiveMatches({
+                status: 'live',
+                leagueId: selectedLeague,
+                limit: PAGE_SIZE,
+                offset: 0,
+                order: tabOrder.live,
+            })
+                .then((res) => {
+                    setTabStates((prev) => ({
+                        ...prev,
+                        live: {
+                            ...prev.live,
+                            // Replace just the first page; preserve any extra
+                            // pages the user already loaded.
+                            items: [
+                                ...res.items,
+                                ...prev.live.items.slice(res.items.length),
+                            ],
+                            total: res.total,
+                        },
+                    }));
+                })
+                .catch(console.error);
+        }, LIVE_POLL_MS);
+
+        return () => clearInterval(interval);
+    }, [activeTab, selectedLeague]);
+
+    const loadMore = useCallback(() => {
+        if (activeTab === 'standings' || !selectedLeague) return;
+        const tab = activeTab as MatchTab;
+        const state = tabStatesRef.current[tab];
+        if (state.loading || !state.hasMore) return;
+
+        setTabStates((prev) => ({ ...prev, [tab]: { ...prev[tab], loading: true } }));
+
+        getLiveMatches({
+            status: tab,
+            leagueId: selectedLeague,
+            limit: PAGE_SIZE,
+            offset: state.items.length,
+            order: tabOrder[tab],
+        })
+            .then((res) => {
+                setTabStates((prev) => ({
+                    ...prev,
+                    [tab]: {
+                        items: [...prev[tab].items, ...res.items],
+                        total: res.total,
+                        loadedKey: prev[tab].loadedKey,
+                        loading: false,
+                        error: null,
+                        hasMore: res.has_more,
+                    },
+                }));
+            })
+            .catch((err) => {
+                console.error(err);
+                setTabStates((prev) => ({
+                    ...prev,
+                    [tab]: { ...prev[tab], loading: false, error: 'Could not load more matches.' },
+                }));
+            });
+    }, [activeTab, selectedLeague]);
+
+    // Infinite scroll: observe a sentinel near the bottom of the list.
+    const sentinelRef = useRef<HTMLDivElement | null>(null);
+    useEffect(() => {
+        if (activeTab === 'standings') return;
+        const el = sentinelRef.current;
+        if (!el) return;
+
+        const observer = new IntersectionObserver(
+            (entries) => {
+                if (entries[0]?.isIntersecting) loadMore();
+            },
+            { rootMargin: '400px' }
+        );
+        observer.observe(el);
+        return () => observer.disconnect();
+    }, [loadMore, activeTab]);
+
+    const activeMatchTab = activeTab === 'standings' ? null : (activeTab as MatchTab);
+    const activeState = activeMatchTab ? tabStates[activeMatchTab] : null;
+    const activeMatches = activeState?.items ?? [];
+
+    // Group matches by date for the section headers.
+    const groupedMatches = useMemo(() => {
+        return activeMatches.reduce((acc, match) => {
+            const date = new Date(match.start_time).toLocaleDateString(undefined, {
+                weekday: 'long',
+                year: 'numeric',
+                month: 'long',
+                day: 'numeric',
+            });
+            if (!acc[date]) acc[date] = [];
+            acc[date].push(match);
+            return acc;
+        }, {} as Record<string, Match[]>);
+    }, [activeMatches]);
+
+    const sortedDates = useMemo(() => {
+        const dates = Object.keys(groupedMatches);
+        dates.sort((a, b) => new Date(a).getTime() - new Date(b).getTime());
+        if (activeTab === 'finished') dates.reverse();
+        return dates;
+    }, [groupedMatches, activeTab]);
+
+    const TabButton = ({
+        id,
+        label,
+        icon: Icon,
+        count,
+    }: {
+        id: TabType;
+        label: string;
+        icon: any;
+        count?: number;
+    }) => (
         <button
             onClick={() => setActiveTab(id)}
-            className={`group relative px-6 py-3 rounded-full font-semibold transition-all duration-300 ${activeTab === id
-                ? 'bg-white text-black shadow-[0_0_20px_rgba(255,255,255,0.3)] scale-105'
-                : 'bg-neutral-900 text-neutral-400 hover:text-white hover:bg-neutral-800 border border-neutral-800'
-                }`}
+            className={`group relative px-6 py-3 rounded-full font-semibold transition-all duration-300 ${
+                activeTab === id
+                    ? 'bg-white text-black shadow-[0_0_20px_rgba(255,255,255,0.3)] scale-105'
+                    : 'bg-neutral-900 text-neutral-400 hover:text-white hover:bg-neutral-800 border border-neutral-800'
+            }`}
         >
             <div className="flex items-center gap-2">
                 <Icon className="w-4 h-4" />
                 <span>{label}</span>
-                {count !== undefined && count > 0 && (
-                    <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${activeTab === id
-                        ? 'bg-black text-white'
-                        : 'bg-neutral-800 text-neutral-400'
-                        }`}>
+                {typeof count === 'number' && count > 0 && (
+                    <span
+                        className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                            activeTab === id
+                                ? 'bg-black text-white'
+                                : 'bg-neutral-800 text-neutral-400'
+                        }`}
+                    >
                         {count}
                     </span>
                 )}
@@ -140,11 +349,7 @@ export default function Home() {
         </button>
     );
 
-    const liveCount = matches.filter(m => selectedLeague ? (m.league_id === selectedLeague && ['LIVE', 'HT', 'ET', 'P'].includes(m.status)) : ['LIVE', 'HT', 'ET', 'P'].includes(m.status)).length;
-    const upcomingCount = matches.filter(m => selectedLeague ? (m.league_id === selectedLeague && ['NS', 'TBD', 'PST'].includes(m.status)) : ['NS', 'TBD', 'PST'].includes(m.status)).length;
-    const finishedCount = matches.filter(m => selectedLeague ? (m.league_id === selectedLeague && ['FT', 'AET', 'PEN'].includes(m.status)) : ['FT', 'AET', 'PEN'].includes(m.status)).length;
-
-    if (loading) {
+    if (bootstrapping) {
         return (
             <main className="min-h-screen bg-neutral-950 text-neutral-200 p-4 md:p-8">
                 <div className="max-w-7xl mx-auto">
@@ -156,13 +361,11 @@ export default function Home() {
 
     return (
         <main className="min-h-screen bg-neutral-950 text-neutral-200 p-4 md:p-8 relative overflow-hidden">
-            {/* Background Beams/Gradient */}
             <div className="absolute inset-0 z-0 pointer-events-none">
                 <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_center,_var(--tw-gradient-stops))] from-blue-900/20 via-neutral-950 to-neutral-950" />
             </div>
 
             <div className="max-w-7xl mx-auto relative z-10">
-                {/* Header */}
                 <div className="mb-12 text-center">
                     <h1 className="text-5xl md:text-7xl font-black mb-6 bg-clip-text text-transparent bg-gradient-to-b from-neutral-50 to-neutral-400 flex items-center justify-center gap-4">
                         <Sparkles className="w-12 h-12 text-blue-500" />
@@ -173,7 +376,6 @@ export default function Home() {
                     </p>
                 </div>
 
-                {/* League Selector */}
                 <div className="mb-12">
                     <LeagueSelector
                         leagues={leagues}
@@ -182,46 +384,71 @@ export default function Home() {
                     />
                 </div>
 
-                {/* Match Tabs */}
                 {selectedLeague && (
                     <>
                         <div className="mb-8">
                             <div className="flex flex-wrap gap-4 justify-center">
-                                <TabButton id="live" label="Live" icon={Activity} count={liveCount} />
-                                <TabButton id="upcoming" label="Upcoming" icon={Calendar} count={upcomingCount} />
-                                <TabButton id="finished" label="Finished" icon={Clock} count={finishedCount} />
+                                <TabButton id="live" label="Live" icon={Activity} count={tabStates.live.total} />
+                                <TabButton id="upcoming" label="Upcoming" icon={Calendar} count={tabStates.upcoming.total} />
+                                <TabButton id="finished" label="Finished" icon={Clock} count={tabStates.finished.total} />
                                 <TabButton id="standings" label="Table" icon={Trophy} />
                             </div>
                         </div>
 
-                        {/* Content + News Sidebar */}
                         <div className="grid grid-cols-1 lg:grid-cols-[1fr_340px] gap-8">
                             <div>
                                 {activeTab === 'standings' ? (
                                     <div className="bg-neutral-900/50 border border-neutral-800 rounded-3xl p-6 backdrop-blur-sm">
                                         <StandingsTable
                                             leagueId={selectedLeague}
-                                            leagueName={leagues.find(l => l.id === selectedLeague)?.name}
+                                            leagueName={leagues.find((l) => l.id === selectedLeague)?.name}
                                         />
                                     </div>
                                 ) : (
                                     <div className="space-y-12">
-                                        {sortedDates.length > 0 ? (
-                                            sortedDates.map(date => (
-                                                <div key={date}>
-                                                    <div className="flex items-center gap-4 mb-6">
-                                                        <div className="h-px flex-1 bg-gradient-to-r from-transparent via-neutral-800 to-transparent" />
-                                                        <h3 className="text-xl font-bold text-neutral-400 uppercase tracking-widest">{date}</h3>
-                                                        <div className="h-px flex-1 bg-gradient-to-r from-transparent via-neutral-800 to-transparent" />
-                                                    </div>
+                                        {activeState?.loading && activeMatches.length === 0 ? (
+                                            <LoadingSpinner />
+                                        ) : sortedDates.length > 0 ? (
+                                            <>
+                                                {sortedDates.map((date) => (
+                                                    <div key={date}>
+                                                        <div className="flex items-center gap-4 mb-6">
+                                                            <div className="h-px flex-1 bg-gradient-to-r from-transparent via-neutral-800 to-transparent" />
+                                                            <h3 className="text-xl font-bold text-neutral-400 uppercase tracking-widest">
+                                                                {date}
+                                                            </h3>
+                                                            <div className="h-px flex-1 bg-gradient-to-r from-transparent via-neutral-800 to-transparent" />
+                                                        </div>
 
-                                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                                                        {groupedMatches[date].map(match => (
-                                                            <EnhancedMatchCard key={match.id} match={match} />
-                                                        ))}
+                                                        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                                                            {groupedMatches[date].map((match) => (
+                                                                <EnhancedMatchCard key={match.id} match={match} />
+                                                            ))}
+                                                        </div>
                                                     </div>
-                                                </div>
-                                            ))
+                                                ))}
+
+                                                <div ref={sentinelRef} className="h-10 w-full" aria-hidden />
+
+                                                {activeState?.loading && activeMatches.length > 0 && (
+                                                    <div className="flex items-center justify-center gap-2 py-6 text-neutral-400">
+                                                        <Loader2 className="w-4 h-4 animate-spin" />
+                                                        <span className="text-sm">Loading more...</span>
+                                                    </div>
+                                                )}
+
+                                                {!activeState?.hasMore && activeMatches.length >= PAGE_SIZE && (
+                                                    <div className="text-center py-6 text-neutral-600 text-sm">
+                                                        You've reached the end.
+                                                    </div>
+                                                )}
+
+                                                {activeState?.error && (
+                                                    <div className="text-center py-4 text-red-400 text-sm">
+                                                        {activeState.error}
+                                                    </div>
+                                                )}
+                                            </>
                                         ) : (
                                             <div className="text-center py-32 bg-neutral-900/30 border border-neutral-800 rounded-3xl">
                                                 <div className="mb-6">

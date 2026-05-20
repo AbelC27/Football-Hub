@@ -116,21 +116,46 @@ def fetch_fixtures_date_range(start_date, end_date, league_id=None):
     
     return all_fixtures
 
-def fetch_upcoming_fixtures(league_id, count=50):
-    """Fetch upcoming fixtures for a league using date range"""
-    from datetime import datetime, timedelta
+def _current_season_year():
+    """Return the football season year (e.g. 2024 for the 2024/25 season)."""
     today = datetime.now()
-    # Fetch next 7 days
-    end_date = today + timedelta(days=7)
-    return fetch_fixtures_date_range(today, end_date, league_id)
+    # European seasons start around July/August. Anything before July still
+    # belongs to the previous season (e.g. May 2025 -> 2024/25 season).
+    return today.year if today.month >= 7 else today.year - 1
 
-def fetch_recent_fixtures(league_id, count=50):
-    """Fetch recent/completed fixtures for a league using date range"""
-    from datetime import datetime, timedelta
-    today = datetime.now()
-    # Fetch last 7 days
-    start_date = today - timedelta(days=7)
-    return fetch_fixtures_date_range(start_date, today, league_id)
+def fetch_season_fixtures(league_id, season=None):
+    """
+    Fetch every fixture for a league across the whole season in a single
+    API call. This is the source of truth for season-wide seeding and avoids
+    the per-day pagination used by `fetch_fixtures_date_range`.
+    """
+    if season is None:
+        season = _current_season_year()
+    return fetch_fixtures(league_id, season=season)
+
+def fetch_upcoming_fixtures(league_id, count=None, season=None):
+    """
+    Fetch upcoming (NS / TBD / scheduled) fixtures for a league.
+    Defaults to the entire current season instead of just the next 7 days.
+    """
+    fixtures = fetch_season_fixtures(league_id, season=season)
+    upcoming_statuses = {'NS', 'TBD', 'PST', 'SUSP'}
+    upcoming = [f for f in fixtures if f.get('fixture', {}).get('status', {}).get('short') in upcoming_statuses]
+    if count:
+        upcoming = upcoming[:count]
+    return upcoming
+
+def fetch_recent_fixtures(league_id, count=None, season=None):
+    """
+    Fetch completed/in-progress fixtures for a league.
+    Defaults to the entire current season instead of just the last 7 days.
+    """
+    fixtures = fetch_season_fixtures(league_id, season=season)
+    finished_statuses = {'FT', 'AET', 'PEN', 'LIVE', '1H', '2H', 'HT', 'ET', 'BT', 'P'}
+    recent = [f for f in fixtures if f.get('fixture', {}).get('status', {}).get('short') in finished_statuses]
+    if count:
+        recent = recent[-count:]
+    return recent
 
 def fetch_teams_from_fixtures(fixtures_data):
     """Extract unique teams from fixtures data"""

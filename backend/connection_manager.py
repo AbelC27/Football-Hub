@@ -10,10 +10,27 @@ class ConnectionManager:
         self.active_connections.append(websocket)
 
     def disconnect(self, websocket: WebSocket):
-        self.active_connections.remove(websocket)
+        if websocket in self.active_connections:
+            self.active_connections.remove(websocket)
 
     async def broadcast(self, message: str):
-        for connection in self.active_connections:
-            await connection.send_text(message)
+        # Iterate over a snapshot so a disconnect mid-broadcast can't trip
+        # the loop on a mutated list.
+        for connection in list(self.active_connections):
+            try:
+                await connection.send_text(message)
+            except Exception:
+                # Drop dead connections so they don't accumulate.
+                self.disconnect(connection)
+
+    async def shutdown(self):
+        """Close every active WebSocket. Called on app shutdown so uvicorn
+        --reload doesn't hang waiting for live clients to disconnect."""
+        for connection in list(self.active_connections):
+            try:
+                await connection.close(code=1001)  # 1001 = going away
+            except Exception:
+                pass
+            self.disconnect(connection)
 
 manager = ConnectionManager()

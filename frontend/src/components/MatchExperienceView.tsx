@@ -81,13 +81,6 @@ function EventBadge({ type }: { type: string }) {
   return <Badge tone="default">Event</Badge>;
 }
 
-function confidenceTone(label: string): "success" | "warning" | "danger" {
-  const normalized = label.toLowerCase();
-  if (normalized === "high") return "success";
-  if (normalized === "medium") return "warning";
-  return "danger";
-}
-
 function sourceLabel(source: string) {
   if (source === "trained_model") return "trained model";
   if (source === "heuristic_fallback") return "heuristic fallback";
@@ -105,13 +98,11 @@ function NextEventTaskCard({
     <div className="space-y-3 rounded-xl border border-neutral-200 bg-neutral-50 p-4 dark:border-neutral-800 dark:bg-neutral-900/70">
       <div className="flex flex-wrap items-center gap-2">
         <h4 className="text-sm font-semibold uppercase tracking-wide text-neutral-700 dark:text-neutral-200">{title}</h4>
-        <Badge tone={confidenceTone(payload.confidence_label)}>{payload.confidence_label.toUpperCase()}</Badge>
-        <Badge>{(payload.confidence_score * 100).toFixed(1)}%</Badge>
         <Badge>{sourceLabel(payload.source)}</Badge>
       </div>
 
       <p className="text-xs text-neutral-500 dark:text-neutral-400">
-        Minute {payload.minute_context} · Top-3 mass from full distribution: {(payload.top3_probability_mass_from_full_distribution * 100).toFixed(1)}%
+        Minute {payload.minute_context}
       </p>
 
       {payload.top_candidates.length === 0 ? (
@@ -137,17 +128,6 @@ function NextEventTaskCard({
           ))}
         </div>
       )}
-
-      {payload.data_limitations.length > 0 ? (
-        <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-900/50 dark:bg-amber-900/20 dark:text-amber-200">
-          <p className="mb-1 font-semibold">Data limitations</p>
-          <ul className="list-disc space-y-1 pl-4">
-            {payload.data_limitations.map((note, index) => (
-              <li key={`${payload.task}-limit-${index}`}>{note}</li>
-            ))}
-          </ul>
-        </div>
-      ) : null}
     </div>
   );
 }
@@ -327,9 +307,6 @@ export function MatchExperienceView({
                           <p className="text-lg font-bold text-sky-600">{data.prediction.away_win_prob.toFixed(1)}%</p>
                         </div>
                       </div>
-                      <p className="text-sm text-neutral-500 dark:text-neutral-400">
-                        Confidence score: <span className="font-semibold text-neutral-700 dark:text-neutral-200">{data.prediction.confidence_score.toFixed(2)}</span>
-                      </p>
                     </div>
                   ) : (
                     <div className="rounded-lg border border-dashed border-neutral-300 p-5 text-sm text-neutral-500 dark:border-neutral-700 dark:text-neutral-400">
@@ -396,17 +373,6 @@ export function MatchExperienceView({
                       <NextEventTaskCard title="Next Goal" payload={nextEventPrediction.next_goal} />
                       <NextEventTaskCard title="Next Assist" payload={nextEventPrediction.next_assist} />
                     </div>
-
-                    {nextEventPrediction.global_limitations.length > 0 ? (
-                      <div className="rounded-lg border border-neutral-200 bg-neutral-50 px-4 py-3 text-xs text-neutral-600 dark:border-neutral-800 dark:bg-neutral-900 dark:text-neutral-300">
-                        <p className="mb-1 font-semibold">Model limitations</p>
-                        <ul className="list-disc space-y-1 pl-4">
-                          {nextEventPrediction.global_limitations.map((note, index) => (
-                            <li key={`global-limit-${index}`}>{note}</li>
-                          ))}
-                        </ul>
-                      </div>
-                    ) : null}
                   </>
                 ) : null}
 

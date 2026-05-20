@@ -195,20 +195,6 @@ function PlayerComparisonCard({
                         </span>
                     ))}
                 </div>
-
-                {player.fallback_notes && player.fallback_notes.length > 0 ? (
-                    <div className="mt-4 rounded-xl border border-amber-400/30 bg-amber-500/10 p-3 text-sm text-amber-100">
-                        <div className="flex items-center gap-2 mb-1">
-                            <AlertTriangle className="w-4 h-4" />
-                            <span className="font-semibold">Fallback Active</span>
-                        </div>
-                        <ul className="space-y-1 text-xs text-amber-100/90">
-                            {player.fallback_notes.map((note) => (
-                                <li key={note}>{note}</li>
-                            ))}
-                        </ul>
-                    </div>
-                ) : null}
             </div>
         </section>
     );

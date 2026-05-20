@@ -16,9 +16,11 @@ app.add_middleware(
 try:
     from backend.routers import api, ws, standings, auth_router, user_router, fantasy_router, search_router, news_router
     from backend.scheduler import start_scheduler
+    from backend.connection_manager import manager as ws_manager
 except ImportError:
     from routers import api, ws, standings, auth_router, user_router, fantasy_router, search_router, news_router
     from scheduler import start_scheduler
+    from connection_manager import manager as ws_manager
 
 app.include_router(api.router)
 app.include_router(ws.router)
@@ -37,8 +39,11 @@ def startup_event():
 
 
 @app.on_event("shutdown")
-def shutdown_event():
+async def shutdown_event():
     global scheduler_instance
+    # Close any open WebSocket connections so uvicorn --reload doesn't hang
+    # waiting for them to drain.
+    await ws_manager.shutdown()
     if scheduler_instance is not None:
         scheduler_instance.shutdown(wait=False)
         scheduler_instance = None

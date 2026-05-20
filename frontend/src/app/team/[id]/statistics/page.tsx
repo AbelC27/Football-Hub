@@ -10,7 +10,7 @@ import { SquadDepthChartType, TeamSquadDepthChart } from '@/components/team/Team
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { ArrowLeft, RefreshCw, ShieldAlert } from 'lucide-react';
+import { ArrowLeft, RefreshCw } from 'lucide-react';
 import Link from 'next/link';
 import { toast } from 'sonner';
 
@@ -175,18 +175,6 @@ export default function TeamStatisticsPage() {
                         </div>
                     </CardContent>
                 </Card>
-
-                {(stats.fallback_notes.length > 0 || !stats.data_completeness.has_last_10) && (
-                    <Alert className="mb-6 border-amber-200 bg-amber-50/70 text-amber-900 dark:border-amber-800 dark:bg-amber-950/35 dark:text-amber-100">
-                        <ShieldAlert className="h-4 w-4" />
-                        <AlertTitle>Partial analytics</AlertTitle>
-                        <AlertDescription>
-                            {stats.fallback_notes.length > 0
-                                ? stats.fallback_notes.join(' ')
-                                : 'Some windows are currently partial and may expand as more matches are recorded.'}
-                        </AlertDescription>
-                    </Alert>
-                )}
 
                 <Card className="mb-6">
                     <CardHeader className="pb-3">

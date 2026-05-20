@@ -3,7 +3,7 @@
 import dynamic from 'next/dynamic';
 import { useMemo } from 'react';
 import { useTheme } from 'next-themes';
-import { AlertTriangle, GaugeCircle, LineChart } from 'lucide-react';
+import { GaugeCircle, LineChart } from 'lucide-react';
 import type { MatchXGLiveResponse, MatchXGPreMatchResponse } from '@/lib/api';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -63,13 +63,6 @@ function getNivoTheme(isDark: boolean) {
   };
 }
 
-function confidenceTone(label?: string): 'success' | 'warning' | 'danger' {
-  const normalized = (label || '').toLowerCase();
-  if (normalized === 'high') return 'success';
-  if (normalized === 'medium') return 'warning';
-  return 'danger';
-}
-
 export function MatchXGPanel({
   homeName,
   awayName,
@@ -118,11 +111,6 @@ export function MatchXGPanel({
     { team: homeName, xg: currentHomeXg ?? 0 },
     { team: awayName, xg: currentAwayXg ?? 0 },
   ];
-
-  const disclaimers = useMemo(() => {
-    const notes = [...(live?.disclaimers || []), ...(preMatch?.disclaimers || [])];
-    return notes.filter((note, index) => note && notes.indexOf(note) === index);
-  }, [live, preMatch]);
 
   if (loading && !preMatch && !live) {
     return (
@@ -191,10 +179,6 @@ export function MatchXGPanel({
           <Badge tone={model?.is_proxy ? 'warning' : 'success'}>
             {model?.is_proxy ? 'xG Proxy' : 'True xG'}
           </Badge>
-          <Badge tone={confidenceTone(model?.confidence_label)}>
-            {String(model?.confidence_label || 'low').toUpperCase()} CONFIDENCE
-          </Badge>
-          <Badge>{((model?.confidence_score || 0) * 100).toFixed(1)}%</Badge>
           {typeof live?.minute_context === 'number' ? <Badge>Minute {live.minute_context}</Badge> : null}
         </div>
 
@@ -261,20 +245,6 @@ export function MatchXGPanel({
             </div>
           </div>
         </div>
-
-        {disclaimers.length > 0 ? (
-          <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-900 dark:border-amber-900/50 dark:bg-amber-900/20 dark:text-amber-100">
-            <p className="mb-1 flex items-center gap-2 font-semibold">
-              <AlertTriangle className="h-3.5 w-3.5" />
-              Confidence and data quality notes
-            </p>
-            <ul className="list-disc space-y-1 pl-4">
-              {disclaimers.map((note, index) => (
-                <li key={`xg-note-${index}`}>{note}</li>
-              ))}
-            </ul>
-          </div>
-        ) : null}
       </CardContent>
     </Card>
   );

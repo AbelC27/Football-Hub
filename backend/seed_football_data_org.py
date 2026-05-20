@@ -12,6 +12,7 @@ try:
         fetch_competitions,
         fetch_competition_teams,
         fetch_competition_matches,
+        fetch_competition_season_matches,
         fetch_competition_standings,
         parse_team_from_fd,
         parse_match_from_fd,
@@ -25,6 +26,7 @@ except ImportError:
         fetch_competitions,
         fetch_competition_teams,
         fetch_competition_matches,
+        fetch_competition_season_matches,
         fetch_competition_standings,
         parse_team_from_fd,
         parse_match_from_fd,
@@ -36,6 +38,7 @@ except ImportError:
 
 from sqlalchemy.orm import Session
 import datetime
+import os
 
 
 # Make sure tables exist (won't drop them, just creates if missing)
@@ -194,30 +197,58 @@ def seed_league(db: Session, competition_code: str, competition_name: str):
 
     # Step 4: Fetch and add matches
     print("\n=== FETCHING MATCHES ===")
-    
-    # Get all matches (scheduled + finished + live)
-    all_matches = fetch_competition_matches(competition_code)
+
+    # Pull every match for the current season (chunked to bypass the
+    # default 100-row API limit). This replaces the previous unfiltered call
+    # that only returned the API's "current window" subset.
+    all_matches = fetch_competition_season_matches(competition_code)
     print(f"Found {len(all_matches)} total matches")
-    
-    # Filter to only recent/upcoming matches
+
+    # Knockout / playoff matches frequently reference teams that aren't on
+    # the current squad list (eliminated clubs, qualifying-round teams). We
+    # upsert teams encountered in matches so the FK to `teams` always holds.
     fixtures_added = 0
+    skipped_matches = 0
     for match_data in all_matches:
         try:
             parsed = parse_match_from_fd(match_data)
-            
+
             fixture = parsed['fixture']
             teams = parsed['teams']
             goals = parsed['goals']
-            
-            home_team_id = teams['home']['id']
-            away_team_id = teams['away']['id']
-            
-            # Only add if both teams exist in our database (or at least we know about them)
-            # Since we fetched all teams for this comp, they should be there.
-            
+
+            home_team = teams['home']
+            away_team = teams['away']
+            home_team_id = home_team['id']
+            away_team_id = away_team['id']
+
+            if not home_team_id or not away_team_id:
+                skipped_matches += 1
+                continue
+
+            for side in (home_team, away_team):
+                team_row = db.query(Team).filter(Team.id == side['id']).first()
+                if team_row is None:
+                    db.add(Team(
+                        id=side['id'],
+                        name=side.get('name') or f"Team {side['id']}",
+                        logo_url=side.get('logo') or '',
+                        stadium='Unknown',
+                        league_id=league.id,
+                    ))
+                    team_ids.add(side['id'])
+                else:
+                    if side.get('name'):
+                        team_row.name = side['name']
+                    if side.get('logo'):
+                        team_row.logo_url = side['logo']
+
+            # Flush so the FK target rows exist before we add the match.
+            db.flush()
+
             dt_str = fixture['date']
             dt_obj = datetime.datetime.fromisoformat(dt_str.replace('Z', '+00:00'))
-            
+
             existing_match = db.query(Match).filter(Match.id == fixture['id']).first()
             if not existing_match:
                 new_match = Match(
@@ -238,14 +269,17 @@ def seed_league(db: Session, competition_code: str, competition_name: str):
                 existing_match.status = fixture['status']['short']
                 existing_match.home_score = goals['home']
                 existing_match.away_score = goals['away']
-                
+
         except Exception as e:
             print(f"  ⚠️ Error processing match: {e}")
+            db.rollback()
+            skipped_matches += 1
             continue
-    
+
     db.commit()
-    print(f"✓ Added/Updated {fixtures_added} matches")
-    
+    print(f"✓ Added/Updated {fixtures_added} matches"
+          + (f" (skipped {skipped_matches} with bad data)" if skipped_matches else ""))
+
     return len(team_ids), fixtures_added, standings_added, total_players
 
 import time
@@ -253,15 +287,32 @@ import time
 if __name__ == "__main__":
     db = SessionLocal()
     try:
+        # football-data.org free tier exposes the Big 5 + UCL + a few cup
+        # competitions. EL/Conference League aren't reliably available on
+        # free tier, and the code "CLI" actually maps to Copa Libertadores.
+        # Override via FOOTBALL_DATA_SEED_COMPETITIONS env var if you need
+        # a different list, e.g. "PL,CL,SA,PD,BL1,FL1".
+        default_competitions = "PL,CL,SA,PD,BL1,FL1"
+        env_competitions = os.getenv("FOOTBALL_DATA_SEED_COMPETITIONS", default_competitions)
+        code_to_name = {
+            'PL': 'Premier League',
+            'CL': 'UEFA Champions League',
+            'SA': 'Serie A',
+            'PD': 'La Liga',
+            'BL1': 'Bundesliga',
+            'FL1': 'Ligue 1',
+            'DED': 'Eredivisie',
+            'PPL': 'Primeira Liga',
+            'ELC': 'Championship',
+            'CLI': 'Copa Libertadores',
+            'BSA': 'Brasileirão Série A',
+            'WC': 'FIFA World Cup',
+            'EC': 'European Championship',
+        }
         leagues_to_seed = [
-            ('PL', 'Premier League'),
-            ('CL', 'UEFA Champions League'),
-            ('EL', 'UEFA Europa League'),
-            ('CLI', 'UEFA Conference League'),
-            ('SA', 'Serie A'),
-            ('PD', 'La Liga'),
-            ('BL1', 'Bundesliga'),
-            ('FL1', 'Ligue 1')
+            (code.strip().upper(), code_to_name.get(code.strip().upper(), code.strip().upper()))
+            for code in env_competitions.split(",")
+            if code.strip()
         ]
         
         total_stats = {'teams': 0, 'matches': 0, 'standings': 0, 'players': 0}

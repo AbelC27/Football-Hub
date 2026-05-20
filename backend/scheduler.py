@@ -5,13 +5,21 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.interval import IntervalTrigger
 try:
     from backend.database import SessionLocal
-    from backend.services.football_data_org import fetch_competition_matches, parse_match_from_fd
+    from backend.services.football_data_org import (
+        fetch_competition_matches,
+        fetch_competition_season_matches,
+        parse_match_from_fd,
+    )
     from backend.models import Match, League, Team
     from backend.generate_predictions import generate_predictions
     from backend.services.news_triggers import run_post_match_news, run_pre_derby_news
 except ImportError:
     from database import SessionLocal
-    from services.football_data_org import fetch_competition_matches, parse_match_from_fd
+    from services.football_data_org import (
+        fetch_competition_matches,
+        fetch_competition_season_matches,
+        parse_match_from_fd,
+    )
     from models import Match, League, Team
     from generate_predictions import generate_predictions
     from services.news_triggers import run_post_match_news, run_pre_derby_news
@@ -80,9 +88,8 @@ def _upsert_team(db, team_data, league_id: int):
     return team
 
 
-def _sync_competition_matches(db, competition_code: str):
-    """Upsert leagues, teams, and matches for a competition."""
-    matches_data = fetch_competition_matches(competition_code)
+def _persist_matches(db, matches_data):
+    """Upsert leagues, teams, and matches given a list of API match payloads."""
     scanned_count = len(matches_data)
     inserted_count = 0
     updated_count = 0
@@ -145,12 +152,35 @@ def _sync_competition_matches(db, competition_code: str):
 
     return scanned_count, inserted_count, updated_count
 
+
+def _sync_competition_live_window(db, competition_code: str):
+    """
+    Lightweight, frequent sync: only fetches matches in the current live
+    window (yesterday..tomorrow). One API call per competition, well under
+    the free-tier 100-row limit.
+    """
+    today = datetime.datetime.utcnow().date()
+    date_from = (today - datetime.timedelta(days=1)).strftime("%Y-%m-%d")
+    date_to = (today + datetime.timedelta(days=1)).strftime("%Y-%m-%d")
+    matches_data = fetch_competition_matches(
+        competition_code,
+        date_from=date_from,
+        date_to=date_to,
+    )
+    return _persist_matches(db, matches_data)
+
+
+def _sync_competition_full_season(db, competition_code: str):
+    """Full-season sync: pulls every match for the current season via chunking."""
+    matches_data = fetch_competition_season_matches(competition_code)
+    return _persist_matches(db, matches_data)
+
 def update_live_matches():
     """
-    Sync matches from football-data.org for configured competitions.
-    This keeps fixtures fresh by both inserting new matches and updating existing ones.
+    Tight live-window sync (~yesterday..tomorrow) for all configured competitions.
+    Cheap on API quota so it can run frequently to keep scores fresh.
     """
-    logger.info("Starting match sync for competitions: %s", ", ".join(COMPETITIONS_TO_REFRESH))
+    logger.info("Starting live-window sync for competitions: %s", ", ".join(COMPETITIONS_TO_REFRESH))
     db = SessionLocal()
 
     total_scanned = 0
@@ -160,7 +190,7 @@ def update_live_matches():
     try:
         for competition_code in COMPETITIONS_TO_REFRESH:
             try:
-                scanned, inserted, updated = _sync_competition_matches(db, competition_code)
+                scanned, inserted, updated = _sync_competition_live_window(db, competition_code)
                 db.commit()
 
                 total_scanned += scanned
@@ -168,17 +198,56 @@ def update_live_matches():
                 total_updated += updated
             except Exception:
                 db.rollback()
-                logger.exception("Failed to sync competition %s", competition_code)
+                logger.exception("Failed live-window sync for competition %s", competition_code)
 
         logger.info(
-            "Match sync finished. scanned=%s inserted=%s updated=%s",
+            "Live-window sync finished. scanned=%s inserted=%s updated=%s",
             total_scanned,
             total_inserted,
             total_updated
         )
-    except Exception as e:
+    except Exception:
         db.rollback()
-        logger.error(f"Error updating matches: {e}")
+        logger.exception("Error updating live matches")
+    finally:
+        db.close()
+
+
+def sync_full_season():
+    """
+    Full-season sync for all configured competitions. Heavier on API quota
+    (chunks the season into ~60-day windows), so it runs at startup and once
+    per day rather than every minute.
+    """
+    logger.info("Starting full-season sync for competitions: %s", ", ".join(COMPETITIONS_TO_REFRESH))
+    db = SessionLocal()
+
+    total_scanned = 0
+    total_inserted = 0
+    total_updated = 0
+
+    try:
+        for competition_code in COMPETITIONS_TO_REFRESH:
+            try:
+                scanned, inserted, updated = _sync_competition_full_season(db, competition_code)
+                db.commit()
+
+                total_scanned += scanned
+                total_inserted += inserted
+                total_updated += updated
+            except Exception:
+                db.rollback()
+                logger.exception("Failed full-season sync for competition %s", competition_code)
+
+        logger.info(
+            "Full-season sync finished. scanned=%s inserted=%s updated=%s",
+            total_scanned,
+            total_inserted,
+            total_updated
+        )
+    except Exception:
+        db.rollback()
+        logger.exception("Error during full-season sync")
     finally:
         db.close()
 
@@ -193,15 +262,36 @@ def run_predictions():
 
 def start_scheduler():
     scheduler = BackgroundScheduler(timezone=pytz.UTC)
-    
-    # Update matches every 60 seconds and run immediately at startup.
+
+    # Optional full-season sync. Off by default so the backend doesn't burn
+    # API quota on every startup. Run `python seed_football_data_org.py`
+    # manually when you need to backfill, or set
+    # ENABLE_FULL_SEASON_SYNC=1 in .env to re-enable the daily job.
+    if os.getenv("ENABLE_FULL_SEASON_SYNC", "").strip().lower() in {"1", "true", "yes"}:
+        scheduler.add_job(
+            sync_full_season,
+            trigger=IntervalTrigger(hours=24),
+            id='sync_full_season',
+            name='Full Season Sync',
+            replace_existing=True,
+            next_run_time=datetime.datetime.now(tz=pytz.UTC),
+        )
+        logger.info("Full Season Sync enabled (ENABLE_FULL_SEASON_SYNC=1)")
+    else:
+        logger.info(
+            "Full Season Sync disabled. Run seed_football_data_org.py manually "
+            "or set ENABLE_FULL_SEASON_SYNC=1 to re-enable."
+        )
+
+    # Update matches every 60 seconds. Uses a tight ±1 day window so it stays
+    # cheap on the football-data.org free tier (10 req/min).
     scheduler.add_job(
         update_live_matches,
         trigger=IntervalTrigger(seconds=60),
         id='update_live_matches',
         name='Update Live Matches',
         replace_existing=True,
-        next_run_time=datetime.datetime.now(tz=pytz.UTC)
+        next_run_time=datetime.datetime.now(tz=pytz.UTC) + datetime.timedelta(seconds=10),
     )
     
     # Generate predictions every hour
