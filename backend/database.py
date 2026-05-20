@@ -9,12 +9,12 @@ load_dotenv()
 SQLALCHEMY_DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://user:password@localhost/football_analytics")
 
 # Supabase free-tier session pooler caps total clients at 15 across the whole
-# project. A FastAPI process plus autoreload, scheduler, and WebSocket can
-# easily blow that. We keep the per-process pool small (5 + 5 overflow = 10
-# max) so two concurrent processes during a reload still fit under the cap.
-# Override via env vars if needed for local Postgres or paid tiers.
-_pool_size = int(os.getenv("DB_POOL_SIZE", "5"))
-_max_overflow = int(os.getenv("DB_MAX_OVERFLOW", "5"))
+# project. The defaults here (3 + 2 overflow = 5 per process) leave plenty of
+# headroom for autoreload (briefly 2 processes) plus the scheduler, scripts,
+# and Supabase dashboard tabs. Override via env vars if you upgrade Supabase
+# or move to a local Postgres.
+_pool_size = int(os.getenv("DB_POOL_SIZE", "3"))
+_max_overflow = int(os.getenv("DB_MAX_OVERFLOW", "2"))
 _pool_timeout = int(os.getenv("DB_POOL_TIMEOUT", "10"))
 
 # `connect_timeout` (psycopg2) caps the time spent on each TCP attempt, so a

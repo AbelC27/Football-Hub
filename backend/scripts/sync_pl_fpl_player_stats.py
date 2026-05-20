@@ -1,0 +1,161 @@
+"""Refresh local Player season stats from the FPL bootstrap-static endpoint.
+
+Usage:
+    cd backend && .venv/bin/python scripts/sync_pl_fpl_player_stats.py
+    cd backend && .venv/bin/python scripts/sync_pl_fpl_player_stats.py --mark-confidence-floor 85
+
+Total FPL network calls: 1. Designed to be run on a daily cron, e.g.
+``15 4 * * *`` (15 minutes after the api-sports cron, so the two providers
+don't pile on at the same time).
+
+What gets updated:
+
+* ``Player.goals_season`` <- ``element.goals_scored``
+* ``Player.assists_season`` <- ``element.assists``
+* ``Player.minutes_played`` <- ``element.minutes``
+
+``Player.rating_season`` is NOT touched — FPL doesn't surface a season rating
+and we don't want to clobber anything api-sports may have populated.
+"""
+
+from __future__ import annotations
+
+import argparse
+import logging
+import os
+import sys
+from typing import Any, Dict, Optional
+
+_THIS_DIR = os.path.dirname(os.path.abspath(__file__))
+_BACKEND_DIR = os.path.dirname(_THIS_DIR)
+if _BACKEND_DIR not in sys.path:
+    sys.path.insert(0, _BACKEND_DIR)
+
+try:
+    from backend.database import SessionLocal
+    from backend.models import Player, ProviderIdMap
+    from backend.services.fpl import PROVIDER, get_bootstrap_static
+except ImportError:  # pragma: no cover
+    from database import SessionLocal  # type: ignore
+    from models import Player, ProviderIdMap  # type: ignore
+    from services.fpl import PROVIDER, get_bootstrap_static  # type: ignore
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+logger = logging.getLogger("sync_pl_fpl_player_stats")
+
+
+def _to_int(value: Any) -> Optional[int]:
+    if value is None or value == "":
+        return None
+    try:
+        return int(float(value))
+    except (TypeError, ValueError):
+        return None
+
+
+def _apply_stats(player: Player, element: Dict[str, Any]) -> bool:
+    new_goals = _to_int(element.get("goals_scored"))
+    new_assists = _to_int(element.get("assists"))
+    new_minutes = _to_int(element.get("minutes"))
+
+    changed = False
+    if new_goals is not None and new_goals != player.goals_season:
+        player.goals_season = new_goals
+        changed = True
+    if new_assists is not None and new_assists != player.assists_season:
+        player.assists_season = new_assists
+        changed = True
+    if new_minutes is not None and new_minutes != player.minutes_played:
+        player.minutes_played = new_minutes
+        changed = True
+
+    return changed
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="Sync PL player season stats from FPL.")
+    parser.add_argument(
+        "--mark-confidence-floor",
+        type=int,
+        default=0,
+        help="Only update players whose FPL mapping confidence is >= this value (default: 0).",
+    )
+    args = parser.parse_args()
+
+    floor = max(0, int(args.mark_confidence_floor))
+    logger.info("Confidence floor: %d", floor)
+
+    db = SessionLocal()
+    counters = {"updated": 0, "skipped": 0, "missing": 0}
+    network_calls = 0
+
+    try:
+        try:
+            bootstrap = get_bootstrap_static(force_refresh=True)
+            network_calls += 1
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("FPL bootstrap-static fetch failed: %s", exc)
+            return 1
+
+        elements = bootstrap.get("elements") or []
+        logger.info("Pulled %d FPL elements.", len(elements))
+
+        # Pre-load all FPL player mappings so we don't hit the DB once per element.
+        mapping_rows = (
+            db.query(ProviderIdMap)
+            .filter(
+                ProviderIdMap.provider == PROVIDER,
+                ProviderIdMap.entity_type == "player",
+            )
+            .all()
+        )
+        external_to_local: Dict[int, int] = {}
+        external_to_confidence: Dict[int, float] = {}
+        for row in mapping_rows:
+            external_to_local[int(row.external_id)] = int(row.local_id)
+            external_to_confidence[int(row.external_id)] = float(row.confidence) if row.confidence is not None else 0.0
+
+        for element in elements:
+            external_id = element.get("id")
+            if external_id is None:
+                counters["missing"] += 1
+                continue
+
+            local_id = external_to_local.get(int(external_id))
+            if local_id is None:
+                counters["missing"] += 1
+                continue
+
+            if external_to_confidence.get(int(external_id), 0.0) < floor:
+                counters["skipped"] += 1
+                continue
+
+            player = db.query(Player).filter(Player.id == local_id).first()
+            if player is None:
+                counters["missing"] += 1
+                continue
+
+            if _apply_stats(player, element):
+                counters["updated"] += 1
+            else:
+                counters["skipped"] += 1
+
+        db.commit()
+
+        print("\nFPL player stats sync summary")
+        print("=" * 50)
+        print(f"updated:        {counters['updated']}")
+        print(f"skipped:        {counters['skipped']}")
+        print(f"missing:        {counters['missing']}")
+        print(f"network_calls:  {network_calls}")
+        print("=" * 50)
+        return 0
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        db.close()
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

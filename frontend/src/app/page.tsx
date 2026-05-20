@@ -1,7 +1,14 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Match, getLiveMatches, getLeagues, League } from '@/lib/api';
+import {
+    getLeagues,
+    getLiveMatches,
+    getMatchEventsBulk,
+    League,
+    Match,
+    MatchEventEntry,
+} from '@/lib/api';
 import { EnhancedMatchCard } from '@/components/EnhancedMatchCard';
 import { StandingsTable } from '@/components/StandingsTable';
 import { LeagueSelector } from '@/components/LeagueSelector';
@@ -73,6 +80,15 @@ export default function Home() {
     useEffect(() => {
         tabStatesRef.current = tabStates;
     }, [tabStates]);
+
+    // Cache of MatchEvent rows keyed by local match id. We only fetch ids
+    // we don't already have, and re-fetch live matches periodically so the
+    // scorers strip on the homepage stays fresh.
+    const [eventsByMatchId, setEventsByMatchId] = useState<Record<number, MatchEventEntry[]>>({});
+    const eventsByMatchIdRef = useRef(eventsByMatchId);
+    useEffect(() => {
+        eventsByMatchIdRef.current = eventsByMatchId;
+    }, [eventsByMatchId]);
 
     // Build a unique key per (tab, league) so we know when to refetch.
     const buildKey = useCallback((tab: MatchTab, leagueId: number | null) => {
@@ -198,6 +214,40 @@ export default function Home() {
         return () => aborter.abort();
     }, [activeTab, selectedLeague, buildKey]);
 
+    // Fetch event rows for any visible matches we don't yet have cached.
+    // Re-runs whenever the visible match ids change (tab/league switch,
+    // pagination, live polling). Cheap: one DB-only call against the
+    // backend bulk endpoint, no external API hits.
+    useEffect(() => {
+        if (activeTab === 'standings' || !selectedLeague) return;
+        const tab = activeTab as MatchTab;
+        const visibleIds = tabStates[tab].items.map((m) => m.id);
+        if (visibleIds.length === 0) return;
+
+        const cached = eventsByMatchIdRef.current;
+        const missing = visibleIds.filter((id) => !(id in cached));
+        if (missing.length === 0) return;
+
+        const aborter = new AbortController();
+        getMatchEventsBulk(missing, aborter.signal)
+            .then((map) => {
+                setEventsByMatchId((prev) => {
+                    const next = { ...prev };
+                    for (const id of missing) {
+                        const events = map[String(id)] ?? [];
+                        next[id] = events;
+                    }
+                    return next;
+                });
+            })
+            .catch((err) => {
+                if (err?.name === 'AbortError') return;
+                console.warn('Failed to load match events:', err);
+            });
+
+        return () => aborter.abort();
+    }, [activeTab, selectedLeague, tabStates]);
+
     // Poll the live tab every 30s so scores stay fresh. Only re-fetches the
     // first page; the user can still scroll for more if they want.
     useEffect(() => {
@@ -225,6 +275,17 @@ export default function Home() {
                             total: res.total,
                         },
                     }));
+                    // Drop cached events for these live matches so the next
+                    // bulk-fetch effect run picks up any new goals.
+                    if (res.items.length > 0) {
+                        setEventsByMatchId((prev) => {
+                            const next = { ...prev };
+                            for (const m of res.items) {
+                                delete next[m.id];
+                            }
+                            return next;
+                        });
+                    }
                 })
                 .catch(console.error);
         }, LIVE_POLL_MS);
@@ -422,7 +483,11 @@ export default function Home() {
 
                                                         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                                                             {groupedMatches[date].map((match) => (
-                                                                <EnhancedMatchCard key={match.id} match={match} />
+                                                                <EnhancedMatchCard
+                                                                    key={match.id}
+                                                                    match={match}
+                                                                    events={eventsByMatchId[match.id] ?? null}
+                                                                />
                                                             ))}
                                                         </div>
                                                     </div>

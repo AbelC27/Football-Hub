@@ -5,7 +5,7 @@ from typing import Any, Dict, List, Optional
 import re
 try:
     from backend.database import get_db
-    from backend.models import Match, League, Team, Prediction, Player, MatchEvent, MatchStatistics
+    from backend.models import Match, League, Team, Prediction, Player, MatchEvent, MatchStatistics, ProviderIdMap
     from backend.schemas import (
         Match as MatchSchema,
         MatchXGLiveResponse as MatchXGLiveResponseSchema,
@@ -14,9 +14,12 @@ try:
         MatchExperience as MatchExperienceSchema,
         NextEventPredictionResponse as NextEventPredictionResponseSchema,
     )
+    from backend.services import apisports as apisports_client
+    from backend.services.apisports import ApisportsQuotaExceeded
+    from backend.services import fpl as fpl_client
 except ImportError:
     from database import get_db
-    from models import Match, League, Team, Prediction, Player, MatchEvent, MatchStatistics
+    from models import Match, League, Team, Prediction, Player, MatchEvent, MatchStatistics, ProviderIdMap
     from schemas import (
         Match as MatchSchema,
         MatchXGLiveResponse as MatchXGLiveResponseSchema,
@@ -25,7 +28,11 @@ except ImportError:
         MatchExperience as MatchExperienceSchema,
         NextEventPredictionResponse as NextEventPredictionResponseSchema,
     )
+    from services import apisports as apisports_client
+    from services.apisports import ApisportsQuotaExceeded
+    from services import fpl as fpl_client
 import datetime
+import logging
 from services.data_aggregator import data_aggregator
 from services.thesportsdb_service import thesportsdb
 from services.api_football_service import api_football
@@ -40,6 +47,8 @@ except ImportError:
     from ai.xg_model import xg_inference_service
 
 router = APIRouter(prefix="/api/v1", tags=["api"])
+
+logger = logging.getLogger(__name__)
 
 SUPPORTED_COMPETITION_LEAGUE_IDS = {
     39,   # Premier League (API-Football)
@@ -1521,9 +1530,353 @@ def get_match_xg_live(
 
 @router.get("/match/{match_id}/events")
 def get_match_events(match_id: int, db: Session = Depends(get_db)):
-    """Get all events for a match"""
-    events = db.query(MatchEvent).filter(MatchEvent.match_id == match_id).order_by(MatchEvent.minute).all()
-    return events
+    """Return match events for ``match_id``.
+
+    Behaviour (graceful chain — never throws on a degraded data path except
+    when *both* providers fail in a recoverable way):
+
+    1. Return cached ``MatchEvent`` rows if any exist.
+    2. Only attempt enrichment for Premier League matches that have finished
+       (FT/AET/PEN). Other cases return ``[]``.
+    3. Try api-sports first (existing behaviour). Persists rows on success.
+    4. If api-sports still leaves us with zero rows (mapping missing, network
+       error, *or* ``ApisportsQuotaExceeded``), try the FPL fallback via
+       ``services.fpl.persist_fpl_events_for_match``.
+    5. Re-fetch events from DB and return them.
+    6. ``503`` is only returned if api-sports raised quota *and* FPL also
+       failed for a non-quota reason.
+
+    Returns: a list of dicts with the keys ``id``, ``minute``, ``event_type``,
+    ``team_id``, ``player_id``, ``player_name``, ``assist_player_id``,
+    ``assist_player_name``, ``detail``.
+    """
+    PL_LOCAL_LEAGUE_ID = 2021
+    PROVIDER = "apisports"
+
+    match = db.query(Match).filter(Match.id == match_id).first()
+    if match is None:
+        raise HTTPException(status_code=404, detail="Match not found")
+
+    def _serialize(events):
+        return [
+            {
+                "id": e.id,
+                "minute": e.minute,
+                "event_type": e.event_type,
+                "team_id": e.team_id,
+                "player_id": e.player_id,
+                "player_name": e.player_name,
+                "assist_player_id": e.assist_player_id,
+                "assist_player_name": e.assist_player_name,
+                "detail": e.detail,
+            }
+            for e in events
+        ]
+
+    def _fetch_existing():
+        return (
+            db.query(MatchEvent)
+            .filter(MatchEvent.match_id == match_id)
+            .order_by(MatchEvent.minute.asc(), MatchEvent.id.asc())
+            .all()
+        )
+
+    existing_events = _fetch_existing()
+    if existing_events:
+        return _serialize(existing_events)
+
+    # Don't burn an api call on matches that haven't finished yet.
+    if match.status not in {"FT", "AET", "PEN"}:
+        return []
+
+    # PL-only for now.
+    if match.league_id != PL_LOCAL_LEAGUE_ID:
+        return []
+
+    apisports_quota_exceeded = False
+    inserted_via_apisports = 0
+    try:
+        inserted_via_apisports = _try_apisports_for_match(db, match, PROVIDER)
+    except ApisportsQuotaExceeded:
+        db.rollback()
+        apisports_quota_exceeded = True
+        logger.warning(
+            "api-sports quota exceeded while enriching match %d; will try FPL fallback.",
+            match_id,
+        )
+    except Exception as exc:  # noqa: BLE001 - keep the chain alive
+        db.rollback()
+        logger.exception("api-sports enrichment failed for match %d: %s", match_id, exc)
+
+    # If api-sports persisted rows, return them straight away.
+    if inserted_via_apisports > 0:
+        return _serialize(_fetch_existing())
+
+    # ------------------------------------------------------------------
+    # FPL fallback
+    # ------------------------------------------------------------------
+    fpl_inserted = 0
+    fpl_failed = False
+    try:
+        fpl_inserted = fpl_client.persist_fpl_events_for_match(db, match)
+    except Exception as exc:  # noqa: BLE001 - degraded path
+        fpl_failed = True
+        db.rollback()
+        logger.exception("FPL fallback failed for match %d: %s", match_id, exc)
+
+    if fpl_inserted > 0:
+        return _serialize(_fetch_existing())
+
+    # If api-sports tripped the quota AND FPL didn't bail us out (returned 0
+    # or itself raised), surface a 503 so callers know it's a transient
+    # provider issue rather than "no events".
+    if apisports_quota_exceeded and (fpl_failed or fpl_inserted == 0):
+        # FPL legitimately can return 0 (e.g. fixture not finished, no
+        # mapping). Only 503 when the *quota* was the cause AND we have no
+        # other source. We still return [] (with 503) so the UI handles it
+        # the same way it did before.
+        raise HTTPException(status_code=503, detail="Provider quota exceeded; try later.")
+
+    return _serialize(_fetch_existing())
+
+
+def _try_apisports_for_match(db: Session, match: Match, provider: str) -> int:
+    """Attempt to enrich ``match`` with api-sports events.
+
+    Returns the number of newly-inserted ``MatchEvent`` rows. Raises
+    ``ApisportsQuotaExceeded`` to allow the caller to chain a fallback.
+    Other exceptions propagate and the caller is responsible for rollback.
+    """
+    fixture_map_row = (
+        db.query(ProviderIdMap)
+        .filter(
+            ProviderIdMap.provider == provider,
+            ProviderIdMap.entity_type == "match",
+            ProviderIdMap.local_id == match.id,
+        )
+        .first()
+    )
+    apisports_fixture_id = fixture_map_row.external_id if fixture_map_row else None
+
+    team_map_rows = (
+        db.query(ProviderIdMap)
+        .filter(
+            ProviderIdMap.provider == provider,
+            ProviderIdMap.entity_type == "team",
+            ProviderIdMap.local_id.in_([match.home_team_id, match.away_team_id]),
+        )
+        .all()
+    )
+    local_team_to_external = {row.local_id: row.external_id for row in team_map_rows}
+    external_team_to_local = {row.external_id: row.local_id for row in team_map_rows}
+
+    apisports_home = local_team_to_external.get(match.home_team_id)
+    apisports_away = local_team_to_external.get(match.away_team_id)
+
+    if apisports_fixture_id is None:
+        if apisports_home is None or apisports_away is None:
+            logger.warning(
+                "Cannot resolve apisports fixture for match %d: missing team mapping "
+                "(home=%s away=%s)",
+                match.id,
+                apisports_home,
+                apisports_away,
+            )
+            return 0
+
+        if not match.start_time:
+            logger.warning("Match %d has no start_time; cannot resolve fixture by date.", match.id)
+            return 0
+
+        kickoff_date = match.start_time.date() if hasattr(match.start_time, "date") else match.start_time
+        date_iso = kickoff_date.isoformat()
+        season = apisports_client.current_pl_season()
+
+        candidates = apisports_client.get_fixtures_by_date(
+            season=season,
+            date_iso=date_iso,
+            team_apisports_id=apisports_home,
+        )
+
+        for candidate in candidates:
+            teams_block = (candidate or {}).get("teams") or {}
+            home_id = ((teams_block.get("home") or {}).get("id"))
+            away_id = ((teams_block.get("away") or {}).get("id"))
+            if home_id == apisports_home and away_id == apisports_away:
+                fixture_block = (candidate or {}).get("fixture") or {}
+                apisports_fixture_id = fixture_block.get("id")
+                break
+
+        if apisports_fixture_id is None:
+            logger.warning(
+                "No matching apisports fixture found for match %d on %s "
+                "(home=%s away=%s).",
+                match.id,
+                date_iso,
+                apisports_home,
+                apisports_away,
+            )
+            return 0
+
+        try:
+            db.add(
+                ProviderIdMap(
+                    provider=provider,
+                    entity_type="match",
+                    local_id=match.id,
+                    external_id=int(apisports_fixture_id),
+                    confidence=100.0,
+                    notes=f"resolved via fixtures-by-date {date_iso}",
+                )
+            )
+            db.commit()
+        except Exception as exc:  # noqa: BLE001
+            db.rollback()
+            logger.warning("Failed to persist match mapping for %d: %s", match.id, exc)
+
+    events_payload = apisports_client.get_fixture_events(int(apisports_fixture_id))
+
+    player_ids_needed = set()
+    for ev in events_payload:
+        player_block = (ev or {}).get("player") or {}
+        assist_block = (ev or {}).get("assist") or {}
+        if player_block.get("id"):
+            player_ids_needed.add(int(player_block["id"]))
+        if assist_block.get("id"):
+            player_ids_needed.add(int(assist_block["id"]))
+
+    player_map_rows = []
+    if player_ids_needed:
+        player_map_rows = (
+            db.query(ProviderIdMap)
+            .filter(
+                ProviderIdMap.provider == provider,
+                ProviderIdMap.entity_type == "player",
+                ProviderIdMap.external_id.in_(list(player_ids_needed)),
+            )
+            .all()
+        )
+    external_player_to_local = {row.external_id: row.local_id for row in player_map_rows}
+
+    inserted = 0
+    for ev in events_payload:
+        time_block = (ev or {}).get("time") or {}
+        team_block = (ev or {}).get("team") or {}
+        player_block = (ev or {}).get("player") or {}
+        assist_block = (ev or {}).get("assist") or {}
+
+        external_team_id = team_block.get("id")
+        if external_team_id is None:
+            continue
+        local_team_id = external_team_to_local.get(int(external_team_id))
+        if local_team_id is None:
+            continue
+
+        raw_type = (ev or {}).get("type") or ""
+        normalized = raw_type.lower()
+        if normalized == "goal":
+            event_type = "Goal"
+        elif normalized == "card":
+            event_type = "Card"
+        elif normalized == "subst":
+            event_type = "Subst"
+        else:
+            event_type = raw_type or "Other"
+
+        external_player_id = player_block.get("id")
+        local_player_id = (
+            external_player_to_local.get(int(external_player_id))
+            if external_player_id is not None
+            else None
+        )
+
+        external_assist_id = assist_block.get("id")
+        local_assist_id = (
+            external_player_to_local.get(int(external_assist_id))
+            if external_assist_id is not None
+            else None
+        )
+
+        db.add(
+            MatchEvent(
+                match_id=match.id,
+                minute=time_block.get("elapsed"),
+                event_type=event_type,
+                team_id=local_team_id,
+                player_name=player_block.get("name"),
+                detail=(ev or {}).get("detail"),
+                player_id=local_player_id,
+                assist_player_id=local_assist_id,
+                assist_player_name=assist_block.get("name"),
+            )
+        )
+        inserted += 1
+
+    db.commit()
+    return inserted
+
+
+@router.get("/match-events/bulk")
+def get_match_events_bulk(
+    match_ids: str = Query(..., description="Comma-separated list of match ids, e.g. '538149,538150'"),
+    db: Session = Depends(get_db),
+):
+    """
+    Bulk-fetch already-stored MatchEvent rows for a set of match ids.
+
+    Designed for the homepage match cards: one DB query, no external calls.
+    Matches without events come back as empty arrays. We deliberately do NOT
+    hit api-sports/FPL here — the per-match `/match/{id}/events` endpoint
+    handles lazy enrichment when the user opens a specific match.
+
+    Response shape:
+        {
+            "<match_id>": [ {event}, {event}, ... ],
+            "<match_id>": [],
+            ...
+        }
+    """
+    parsed_ids: List[int] = []
+    for raw in (match_ids or "").split(","):
+        raw = raw.strip()
+        if not raw:
+            continue
+        try:
+            parsed_ids.append(int(raw))
+        except ValueError:
+            raise HTTPException(status_code=400, detail=f"Invalid match id: {raw!r}")
+
+    # De-duplicate and cap so a runaway client can't ask for the whole DB.
+    unique_ids = list({mid for mid in parsed_ids})
+    if not unique_ids:
+        return {}
+    if len(unique_ids) > 200:
+        raise HTTPException(status_code=400, detail="Too many match_ids (max 200).")
+
+    rows = (
+        db.query(MatchEvent)
+        .filter(MatchEvent.match_id.in_(unique_ids))
+        .order_by(MatchEvent.match_id.asc(), MatchEvent.minute.asc().nullslast(), MatchEvent.id.asc())
+        .all()
+    )
+
+    grouped: Dict[int, List[Dict[str, Any]]] = {mid: [] for mid in unique_ids}
+    for row in rows:
+        grouped.setdefault(row.match_id, []).append({
+            "id": row.id,
+            "minute": row.minute,
+            "event_type": row.event_type,
+            "team_id": row.team_id,
+            "player_id": row.player_id,
+            "player_name": row.player_name,
+            "assist_player_id": row.assist_player_id,
+            "assist_player_name": row.assist_player_name,
+            "detail": row.detail,
+        })
+
+    # Stringify keys so the JSON response is predictable from the frontend.
+    return {str(mid): grouped[mid] for mid in unique_ids}
+
 
 @router.get("/match/{match_id}/statistics")
 def get_match_statistics(match_id: int, db: Session = Depends(get_db)):

@@ -6,6 +6,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { AlertTriangle, RefreshCw } from 'lucide-react';
 import {
+    getMatchEventEntries,
     getMatchExperience,
     getMatchNextEventsPrediction,
     getMatchXGLive,
@@ -142,6 +143,21 @@ export default function MatchDetailsPage() {
         },
     });
 
+    // Match events (goals / assists / cards). Hits the backend chain
+    // (cache -> api-sports -> FPL fallback). Cheap once cached so we just
+    // run it alongside the rest.
+    const eventsQuery = useQuery({
+        queryKey: ['match-events', matchId],
+        queryFn: ({ signal }) => getMatchEventEntries(matchId as number, signal),
+        enabled: typeof matchId === 'number' && matchId > 0,
+        staleTime: 30_000,
+        retry: false,
+        refetchInterval: () => {
+            const status = query.data?.header.status?.toUpperCase();
+            return status && ['LIVE', 'HT', 'ET', 'P', '1H', '2H'].includes(status) ? 30_000 : false;
+        },
+    });
+
     useEffect(() => {
         if (query.isSuccess && !successToastShown.current) {
             successToastShown.current = true;
@@ -197,6 +213,7 @@ export default function MatchDetailsPage() {
 
         queryClient.invalidateQueries({ queryKey: ['match-next-events', matchId] });
         queryClient.invalidateQueries({ queryKey: ['match-xg-live', matchId] });
+        queryClient.invalidateQueries({ queryKey: ['match-events', matchId] });
     }, [lastMessage, matchId, queryClient]);
 
     if (!matchId || matchId <= 0) {
@@ -242,6 +259,12 @@ export default function MatchDetailsPage() {
                 : 'Could not load pre-match xG forecast.'
             : null;
 
+    const eventsError = eventsQuery.isError
+        ? eventsQuery.error instanceof Error
+            ? eventsQuery.error.message
+            : 'Could not load match events.'
+        : null;
+
     return (
         <MatchExperienceView
             data={query.data}
@@ -252,6 +275,9 @@ export default function MatchDetailsPage() {
             xgLive={xgLiveQuery.data || null}
             xgLoading={xgPreMatchQuery.isPending || xgLiveQuery.isPending}
             xgError={xgError}
+            matchEvents={eventsQuery.data || null}
+            matchEventsLoading={eventsQuery.isPending}
+            matchEventsError={eventsError}
         />
     );
 }

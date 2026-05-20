@@ -253,6 +253,61 @@ export async function getLeagues(): Promise<League[]> {
   return res.json();
 }
 
+// ---------------------------------------------------------------------------
+// Match events (goals / assists / cards / subs).
+//
+// Powered by /api/v1/match/{id}/events which chains api-sports.io and FPL.
+// Every event row carries enough info to render either the api-sports rich
+// shape (with minute timing) or the FPL aggregate shape (minute === null,
+// scorer / assister live as separate rows).
+// ---------------------------------------------------------------------------
+
+export type MatchEventType = "Goal" | "Assist" | "Card" | "Subst" | string;
+
+export interface MatchEventEntry {
+  id: number;
+  minute: number | null;
+  event_type: MatchEventType;
+  team_id: number | null;
+  player_id: number | null;
+  player_name: string | null;
+  assist_player_id: number | null;
+  assist_player_name: string | null;
+  detail: string | null;
+}
+
+export async function getMatchEventEntries(
+  matchId: number,
+  signal?: AbortSignal
+): Promise<MatchEventEntry[]> {
+  const res = await fetch(`${API_BASE_URL}/match/${matchId}/events`, { signal });
+  if (res.status === 503) {
+    // Provider quota exceeded — caller decides how to surface.
+    const payload = await res.json().catch(() => null);
+    throw new Error(payload?.detail || "Provider quota exceeded; try later.");
+  }
+  if (!res.ok) {
+    const payload = await res.json().catch(() => null);
+    throw new Error(payload?.detail || "Failed to fetch match events");
+  }
+  return res.json();
+}
+
+export async function getMatchEventsBulk(
+  matchIds: number[],
+  signal?: AbortSignal
+): Promise<Record<string, MatchEventEntry[]>> {
+  if (matchIds.length === 0) return {};
+  // Cap at 200 to match the backend; chunk if a caller ever overshoots.
+  const ids = matchIds.slice(0, 200).join(",");
+  const res = await fetch(`${API_BASE_URL}/match-events/bulk?match_ids=${ids}`, { signal });
+  if (!res.ok) {
+    const payload = await res.json().catch(() => null);
+    throw new Error(payload?.detail || "Failed to fetch match events");
+  }
+  return res.json();
+}
+
 export type MatchStatusGroup = "live" | "upcoming" | "finished";
 
 export interface PaginatedMatches {

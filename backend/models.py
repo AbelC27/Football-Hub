@@ -89,6 +89,12 @@ class MatchEvent(Base):
     team_id = Column(Integer, ForeignKey("teams.id"))
     player_name = Column(String)
     detail = Column(String)  # 'Yellow Card', 'Penalty', etc.
+
+    # api-sports.io enrichment (mapped via ProviderIdMap). No FK constraint to
+    # keep migrations trivial; lookups are done manually against Player.id.
+    player_id = Column(Integer, nullable=True)
+    assist_player_id = Column(Integer, nullable=True)
+    assist_player_name = Column(String, nullable=True)
     
 class MatchStatistics(Base):
     __tablename__ = "match_statistics"
@@ -332,3 +338,27 @@ class NewsArticle(Base):
     league = relationship("League", foreign_keys=[league_id])
     home_team = relationship("Team", foreign_keys=[home_team_id])
     away_team = relationship("Team", foreign_keys=[away_team_id])
+
+
+class ProviderIdMap(Base):
+    """Junction table mapping local entity IDs (sourced from football-data.org)
+    to external provider IDs (e.g. api-sports.io). Keeps existing tables
+    untouched while supporting cross-provider enrichment.
+    """
+
+    __tablename__ = "provider_id_map"
+
+    id = Column(Integer, primary_key=True, index=True)
+    provider = Column(String, nullable=False)            # e.g. 'apisports'
+    entity_type = Column(String, nullable=False)         # 'league' | 'team' | 'player' | 'match'
+    local_id = Column(Integer, nullable=False)
+    external_id = Column(Integer, nullable=False)
+    confidence = Column(Float, nullable=True)            # 0..100, mainly for fuzzy player matches
+    notes = Column(String, nullable=True)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
+
+    __table_args__ = (
+        UniqueConstraint('provider', 'entity_type', 'local_id', name='uq_provider_local'),
+        UniqueConstraint('provider', 'entity_type', 'external_id', name='uq_provider_external'),
+    )

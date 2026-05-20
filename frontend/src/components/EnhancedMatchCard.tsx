@@ -1,7 +1,7 @@
 'use client';
 
 import React from 'react';
-import { Match } from '../lib/api';
+import { Match, MatchEventEntry } from '../lib/api';
 import { Card } from './ui/card';
 import { Calendar, MapPin, Activity, TrendingUp, Zap } from 'lucide-react';
 import Link from 'next/link';
@@ -9,6 +9,7 @@ import { motion } from 'framer-motion';
 
 interface EnhancedMatchCardProps {
     match: Match;
+    events?: MatchEventEntry[] | null;
 }
 
 const getStatusColor = (status: string) => {
@@ -33,7 +34,7 @@ const getStatusText = (status: string) => {
     return statusMap[status] || status;
 };
 
-export const EnhancedMatchCard: React.FC<EnhancedMatchCardProps> = ({ match }) => {
+export const EnhancedMatchCard: React.FC<EnhancedMatchCardProps> = ({ match, events = null }) => {
     const isLive = ['LIVE', 'HT', 'ET', 'P'].includes(match.status);
     const isFinished = match.status === 'FT';
     const formattedDate = new Date(match.start_time).toLocaleString('en-US', {
@@ -47,6 +48,20 @@ export const EnhancedMatchCard: React.FC<EnhancedMatchCardProps> = ({ match }) =
     // Determine winner for finished matches
     const homeWin = isFinished && match.home_score !== null && match.away_score !== null && match.home_score! > match.away_score!;
     const awayWin = isFinished && match.home_score !== null && match.away_score !== null && match.away_score! > match.home_score!;
+
+    // Build goal scorer strings per team. Each scorer becomes "Name 23'"
+    // (or just "Name" when minute is unavailable, e.g. FPL aggregate rows).
+    const goalEvents = (events ?? []).filter((e) => (e.event_type || '').toLowerCase() === 'goal');
+    const formatScorer = (e: MatchEventEntry) => {
+        const name = (e.player_name || 'Unknown').trim();
+        return e.minute != null ? `${name} ${e.minute}'` : name;
+    };
+    const homeScorers = goalEvents
+        .filter((e) => e.team_id === match.home_team_id)
+        .map(formatScorer);
+    const awayScorers = goalEvents
+        .filter((e) => e.team_id === match.away_team_id)
+        .map(formatScorer);
 
     return (
         <Link href={`/match/${match.id}`} className="block group">
@@ -159,6 +174,34 @@ export const EnhancedMatchCard: React.FC<EnhancedMatchCardProps> = ({ match }) =
                                 </div>
                             </div>
                         </div>
+
+                        {/* Goal Scorers (only when we have events) */}
+                        {(homeScorers.length > 0 || awayScorers.length > 0) && (
+                            <div className="mt-4 grid grid-cols-2 gap-3 text-xs">
+                                <div className="space-y-1">
+                                    {homeScorers.map((scorer, idx) => (
+                                        <div
+                                            key={`home-${idx}-${scorer}`}
+                                            className="flex items-center gap-1.5 text-gray-700 dark:text-gray-300"
+                                        >
+                                            <span aria-hidden="true">⚽</span>
+                                            <span className="truncate">{scorer}</span>
+                                        </div>
+                                    ))}
+                                </div>
+                                <div className="space-y-1 text-right">
+                                    {awayScorers.map((scorer, idx) => (
+                                        <div
+                                            key={`away-${idx}-${scorer}`}
+                                            className="flex items-center justify-end gap-1.5 text-gray-700 dark:text-gray-300"
+                                        >
+                                            <span className="truncate">{scorer}</span>
+                                            <span aria-hidden="true">⚽</span>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        )}
 
                         {/* Prediction Badge */}
                         {match.prediction && (

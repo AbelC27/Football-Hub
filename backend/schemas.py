@@ -55,7 +55,7 @@ class Prediction(PredictionBase):
 class MatchEvent(BaseModel):
     id: int
     match_id: int
-    minute: int
+    minute: Optional[int] = None
     event_type: str
     team_id: int
     player_name: str
@@ -116,7 +116,7 @@ class MatchExperiencePlayer(BaseModel):
 
 class MatchExperienceEvent(BaseModel):
     id: int
-    minute: int
+    minute: Optional[int] = None
     event_type: str
     team_id: Optional[int] = None
     player_name: Optional[str] = None
@@ -127,7 +127,7 @@ class MatchExperienceEvent(BaseModel):
 
 class MatchExperienceSubstitution(BaseModel):
     id: int
-    minute: int
+    minute: Optional[int] = None
     team_id: Optional[int] = None
     player_name: Optional[str] = None
     detail: Optional[str] = None

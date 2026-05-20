@@ -11,6 +11,7 @@ import {
   ArrowRightLeft,
 } from "lucide-react";
 import {
+  MatchEventEntry,
   MatchExperience,
   MatchXGLiveResponse,
   MatchXGPreMatchResponse,
@@ -32,6 +33,9 @@ interface MatchExperienceViewProps {
   xgLive?: MatchXGLiveResponse | null;
   xgLoading?: boolean;
   xgError?: string | null;
+  matchEvents?: MatchEventEntry[] | null;
+  matchEventsLoading?: boolean;
+  matchEventsError?: string | null;
 }
 
 function formatKickoff(value: string) {
@@ -74,11 +78,159 @@ function ResultBadge({ result }: { result?: "W" | "D" | "L" | null }) {
   return <Badge tone="danger">L</Badge>;
 }
 
-function EventBadge({ type }: { type: string }) {
-  if (type === "goal") return <Badge tone="success">Goal</Badge>;
-  if (type === "assist") return <Badge tone="default">Assist</Badge>;
-  if (type === "card") return <Badge tone="danger">Card</Badge>;
+function EventBadge({ type, detail }: { type: string; detail?: string | null }) {
+  const normalized = type.toLowerCase();
+  if (normalized === "goal") return <Badge tone="success">Goal</Badge>;
+  if (normalized === "assist") return <Badge tone="default">Assist</Badge>;
+  if (normalized === "card") {
+    const isRed = (detail || "").toLowerCase().includes("red");
+    return <Badge tone={isRed ? "danger" : "warning"}>{isRed ? "Red Card" : "Yellow Card"}</Badge>;
+  }
+  if (normalized === "subst") return <Badge tone="default">Subst</Badge>;
   return <Badge tone="default">Event</Badge>;
+}
+
+function MatchEventRow({ event }: { event: MatchEventEntry }) {
+  const minuteLabel = event.minute != null ? `${event.minute}'` : "—";
+  const playerName = event.player_name || "Unknown Player";
+
+  const playerLink = event.player_id ? (
+    <Link
+      href={`/player/${event.player_id}`}
+      className="truncate text-sm font-medium text-sky-700 hover:underline dark:text-sky-300"
+    >
+      {playerName}
+    </Link>
+  ) : (
+    <span className="truncate text-sm font-medium text-neutral-900 dark:text-neutral-100">
+      {playerName}
+    </span>
+  );
+
+  // Build a small subtitle: assist (if present) + raw detail.
+  const subtitleParts: string[] = [];
+  if (event.assist_player_name) {
+    subtitleParts.push(`Assist: ${event.assist_player_name}`);
+  }
+  if (event.detail && event.detail.trim().length > 0) {
+    subtitleParts.push(event.detail);
+  }
+  const subtitle = subtitleParts.length > 0 ? subtitleParts.join(" · ") : null;
+
+  return (
+    <div className="grid grid-cols-[auto_1fr_auto] items-center gap-3 rounded-lg border border-neutral-200 bg-white px-3 py-2 dark:border-neutral-800 dark:bg-neutral-900">
+      <Badge>{minuteLabel}</Badge>
+      <div className="min-w-0">
+        {playerLink}
+        {subtitle ? (
+          <p className="truncate text-xs text-neutral-500 dark:text-neutral-400">{subtitle}</p>
+        ) : null}
+      </div>
+      <EventBadge type={event.event_type} detail={event.detail} />
+    </div>
+  );
+}
+
+function MatchEventsColumn({
+  teamName,
+  events,
+}: {
+  teamName: string;
+  events: MatchEventEntry[];
+}) {
+  return (
+    <div className="space-y-3">
+      <h4 className="text-sm font-semibold uppercase tracking-wide text-neutral-600 dark:text-neutral-300">
+        {teamName}
+      </h4>
+      {events.length === 0 ? (
+        <div className="rounded-lg border border-dashed border-neutral-300 p-4 text-sm text-neutral-500 dark:border-neutral-700 dark:text-neutral-400">
+          No events for this team.
+        </div>
+      ) : (
+        <div className="space-y-2">
+          {events.map((event) => (
+            <MatchEventRow key={event.id} event={event} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function MatchEventsTabContent({
+  events,
+  loading,
+  error,
+  homeTeam,
+  awayTeam,
+}: {
+  events: MatchEventEntry[] | null;
+  loading: boolean;
+  error?: string | null;
+  homeTeam: { id: number; name: string };
+  awayTeam: { id: number; name: string };
+}) {
+  if (loading && !events) {
+    return (
+      <div className="rounded-lg border border-dashed border-neutral-300 p-6 text-center text-sm text-neutral-500 dark:border-neutral-700 dark:text-neutral-400">
+        Loading events...
+      </div>
+    );
+  }
+
+  if (error && !events) {
+    return (
+      <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800 dark:border-amber-900/50 dark:bg-amber-900/20 dark:text-amber-200">
+        {error}
+      </div>
+    );
+  }
+
+  const list = events ?? [];
+
+  if (list.length === 0) {
+    return (
+      <div className="rounded-lg border border-dashed border-neutral-300 p-6 text-center text-sm text-neutral-500 dark:border-neutral-700 dark:text-neutral-400">
+        No events recorded yet.
+      </div>
+    );
+  }
+
+  // Sort: events with a minute go first (chronological), unscheduled rows
+  // (FPL aggregate) come after, ordered by id for stability.
+  const sorted = [...list].sort((a, b) => {
+    if (a.minute != null && b.minute != null) return a.minute - b.minute;
+    if (a.minute != null) return -1;
+    if (b.minute != null) return 1;
+    return a.id - b.id;
+  });
+
+  const homeEvents = sorted.filter((e) => e.team_id === homeTeam.id);
+  const awayEvents = sorted.filter((e) => e.team_id === awayTeam.id);
+  const orphanEvents = sorted.filter(
+    (e) => e.team_id !== homeTeam.id && e.team_id !== awayTeam.id
+  );
+
+  return (
+    <div className="space-y-4">
+      <div className="grid gap-4 md:grid-cols-2">
+        <MatchEventsColumn teamName={homeTeam.name} events={homeEvents} />
+        <MatchEventsColumn teamName={awayTeam.name} events={awayEvents} />
+      </div>
+
+      {orphanEvents.length > 0 ? (
+        <div className="space-y-2">
+          <h4 className="text-sm font-semibold uppercase tracking-wide text-neutral-600 dark:text-neutral-300">
+            Other
+          </h4>
+          {orphanEvents.map((event) => (
+            <MatchEventRow key={event.id} event={event} />
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
 }
 
 function sourceLabel(source: string) {
@@ -199,11 +351,18 @@ export function MatchExperienceView({
   xgLive = null,
   xgLoading = false,
   xgError = null,
+  matchEvents = null,
+  matchEventsLoading = false,
+  matchEventsError = null,
 }: MatchExperienceViewProps) {
   const home = data.teams.home;
   const away = data.teams.away;
   const score = data.header.score;
   const statusTone = getStatusTone(data.header.status);
+
+  // Use the freshly-fetched events from the dedicated endpoint when present;
+  // fall back to whatever was bundled in the match-experience payload.
+  const eventsForTab = matchEvents ?? null;
 
   return (
     <main className="min-h-screen bg-[radial-gradient(circle_at_top,_#eef8ff_0%,_#f6f7fb_42%,_#f1f1f5_100%)] px-4 py-6 dark:bg-[radial-gradient(circle_at_top,_#1a2433_0%,_#0f1115_42%,_#0b0c0f_100%)] md:px-8 md:py-10">
@@ -391,30 +550,13 @@ export function MatchExperienceView({
                 <CardTitle className="text-xl">Goals, Assists and Cards</CardTitle>
               </CardHeader>
               <CardContent>
-                {data.events.length === 0 ? (
-                  <div className="rounded-lg border border-dashed border-neutral-300 p-6 text-center text-sm text-neutral-500 dark:border-neutral-700 dark:text-neutral-400">
-                    No events recorded yet.
-                  </div>
-                ) : (
-                  <div className="space-y-2">
-                    {data.events.map((event) => (
-                      <div
-                        key={event.id}
-                        className="grid grid-cols-[auto_1fr_auto] items-center gap-3 rounded-lg border border-neutral-200 bg-white px-3 py-2 dark:border-neutral-800 dark:bg-neutral-900"
-                      >
-                        <Badge>{event.minute}'</Badge>
-                        <div className="min-w-0">
-                          <p className="truncate text-sm font-medium text-neutral-900 dark:text-neutral-100">{event.player_name || "Unknown Player"}</p>
-                          <p className="truncate text-xs text-neutral-500 dark:text-neutral-400">
-                            {event.assist_player ? `Assist: ${event.assist_player} · ` : ""}
-                            {event.card_type || event.detail || "No extra details"}
-                          </p>
-                        </div>
-                        <EventBadge type={event.event_type} />
-                      </div>
-                    ))}
-                  </div>
-                )}
+                <MatchEventsTabContent
+                  events={eventsForTab}
+                  loading={matchEventsLoading}
+                  error={matchEventsError}
+                  homeTeam={{ id: home.id, name: home.name }}
+                  awayTeam={{ id: away.id, name: away.name }}
+                />
               </CardContent>
             </Card>
           </TabsContent>
