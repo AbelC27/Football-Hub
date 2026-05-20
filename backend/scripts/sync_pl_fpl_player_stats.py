@@ -25,6 +25,13 @@ FPL signal fields (used to compute the overall rating):
 * ``Player.fpl_threat``          <- ``element.threat``
 * ``Player.fpl_element_type``    <- ``element.element_type`` (1=GK 2=DEF 3=MID 4=FWD)
 
+Photo:
+* ``Player.photo_url`` <- the FPL CDN asset
+  ``https://resources.premierleague.com/premierleague/photos/players/250x250/p{id}.png``
+  derived from ``element.photo``. Only overwritten when the FPL element
+  references a different file; never cleared (we keep the last good URL
+  even after a player loses their FPL listing).
+
 ``Player.rating_season`` is NOT touched — FPL doesn't surface a season rating
 and we don't want to clobber anything api-sports may have populated.
 """
@@ -73,6 +80,26 @@ def _to_float(value: Any) -> Optional[float]:
         return None
 
 
+def _fpl_photo_url(element: Dict[str, Any]) -> Optional[str]:
+    """Build the public Premier League photo URL for an FPL element.
+
+    FPL's `photo` field is a string like "12345.jpg" referencing an asset
+    on `resources.premierleague.com`. The actual file is a PNG with the
+    `p` prefix and a sized subfolder. We pick 250x250 (sharp on the EA-FC
+    card, still light on bandwidth for list views).
+
+    Returns None if the element has no photo asset.
+    """
+    raw = element.get("photo")
+    if not raw or not isinstance(raw, str):
+        return None
+    # raw is e.g. "12345.jpg" -> strip the extension and rebuild as PNG.
+    stem = raw.split(".", 1)[0]
+    if not stem:
+        return None
+    return f"https://resources.premierleague.com/premierleague/photos/players/250x250/p{stem}.png"
+
+
 def _apply_stats(player: Player, element: Dict[str, Any]) -> bool:
     """Apply both raw stats and FPL signal fields to a Player row."""
     new_values: Dict[str, Any] = {
@@ -89,6 +116,12 @@ def _apply_stats(player: Player, element: Dict[str, Any]) -> bool:
         "fpl_element_type": _to_int(element.get("element_type")),
     }
 
+    # Photo is set only if the player doesn't already have one *or* the
+    # element points to a different photo. Once set we don't overwrite a
+    # populated url with None (a rotated player can drop their FPL photo
+    # mid-season; we keep the last good one).
+    fpl_photo = _fpl_photo_url(element)
+
     changed = False
     for attr, value in new_values.items():
         if value is None:
@@ -96,6 +129,10 @@ def _apply_stats(player: Player, element: Dict[str, Any]) -> bool:
         if getattr(player, attr) != value:
             setattr(player, attr, value)
             changed = True
+
+    if fpl_photo and player.photo_url != fpl_photo:
+        player.photo_url = fpl_photo
+        changed = True
 
     return changed
 

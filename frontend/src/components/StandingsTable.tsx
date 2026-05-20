@@ -33,12 +33,12 @@ const FormIndicator = ({ form }: { form: string }) => {
     if (!form) return null;
     return (
         <div className="flex gap-1">
-            {form.split(',').slice(-5).map((result, idx) => (
+            {form.split('').slice(-5).map((result, idx) => (
                 <div
                     key={idx}
-                    className={`w-7 h-7 rounded-lg flex items-center justify-center text-xs font-bold shadow-sm ${result === 'W' ? 'bg-gradient-to-br from-green-500 to-green-600 text-white' :
-                            result === 'D' ? 'bg-gradient-to-br from-yellow-500 to-yellow-600 text-white' :
-                                'bg-gradient-to-br from-red-500 to-red-600 text-white'
+                    className={`w-9 h-9 rounded-none flex items-center justify-center text-sm font-bold shadow-sm ${result === 'W' ? 'bg-green-500 text-white' :
+                            result === 'D' ? 'bg-yellow-500 text-white' :
+                                'bg-red-500 text-white'
                         }`}
                 >
                     {result}
@@ -51,9 +51,14 @@ const FormIndicator = ({ form }: { form: string }) => {
 export function StandingsTable({ leagueId = 2021, leagueName = "Premier League" }: { leagueId?: number, leagueName?: string }) {
     const [standings, setStandings] = useState<TeamStanding[]>([]);
     const [loading, setLoading] = useState(true);
+    const [trackedLeagueId, setTrackedLeagueId] = useState(leagueId);
+
+    if (trackedLeagueId !== leagueId) {
+        setTrackedLeagueId(leagueId);
+        setLoading(true);
+    }
 
     useEffect(() => {
-        setLoading(true);
         getStandings(leagueId)
             .then(setStandings)
             .catch(console.error)

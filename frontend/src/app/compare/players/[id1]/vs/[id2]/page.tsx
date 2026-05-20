@@ -11,20 +11,13 @@ import {
     getPlayerComparison,
 } from '@/lib/api';
 import { PlayerComparisonRadar } from '@/components/compare/PlayerComparisonRadar';
-import { AlertTriangle, ArrowLeft, Info } from 'lucide-react';
+import { ArrowLeft, Info } from 'lucide-react';
 import Link from 'next/link';
 
 const FORM_BADGE_CLASSES: Record<string, string> = {
     W: 'bg-emerald-500/20 border-emerald-400/40 text-emerald-200',
     D: 'bg-amber-500/20 border-amber-400/40 text-amber-200',
     L: 'bg-rose-500/20 border-rose-400/40 text-rose-200',
-};
-
-const SOURCE_LABELS: Record<string, string> = {
-    photo: 'Photo',
-    stats: 'Stats',
-    form: 'Form',
-    discipline: 'Cards',
 };
 
 function parseParamToNumber(param: string | string[] | undefined): number {
@@ -38,11 +31,6 @@ function parseParamToNumber(param: string | string[] | undefined): number {
 function formatNumber(value: number | null | undefined, digits = 0): string {
     if (value == null || Number.isNaN(value)) return 'N/A';
     return value.toFixed(digits);
-}
-
-function formatSource(value: string | undefined): string {
-    if (!value) return 'missing';
-    return value.replace(/_/g, ' ');
 }
 
 function formatDelta(value: number | null | undefined, digits = 1): string {
@@ -90,8 +78,6 @@ function PlayerComparisonCard({
             ? 'border-teal-500/35 shadow-[0_18px_45px_-24px_rgba(20,184,166,0.9)]'
             : 'border-amber-500/35 shadow-[0_18px_45px_-24px_rgba(245,158,11,0.9)]';
 
-    const badgeTone = tone === 'teal' ? 'bg-teal-500/20 text-teal-200' : 'bg-amber-500/20 text-amber-200';
-
     return (
         <section
             className={`relative overflow-hidden rounded-3xl border bg-slate-900/70 backdrop-blur-sm ${cardTone} ${
@@ -132,8 +118,12 @@ function PlayerComparisonCard({
                     </div>
 
                     <div className="text-right">
-                        <p className="text-[11px] uppercase tracking-[0.2em] text-slate-400">Overall Score</p>
+                        <p className="text-[11px] uppercase tracking-[0.2em] text-slate-400">Overall Rating</p>
                         <p className={`text-4xl font-black ${isWinner ? 'text-emerald-300' : 'text-white'}`}>
+                            {stats.overall_rating ?? '—'}
+                        </p>
+                        <p className="mt-3 text-[11px] uppercase tracking-[0.2em] text-slate-400">Overall Score</p>
+                        <p className="text-2xl font-bold text-slate-200">
                             {formatNumber(score, 1)}
                         </p>
                     </div>
@@ -186,14 +176,6 @@ function PlayerComparisonCard({
                     ) : (
                         <p className="mt-2 text-sm text-slate-400">No supported recent-form data available.</p>
                     )}
-                </div>
-
-                <div className="mt-6 flex flex-wrap gap-2">
-                    {Object.entries(player.data_sources ?? {}).map(([key, value]) => (
-                        <span key={key} className={`px-3 py-1 rounded-full border border-transparent text-xs ${badgeTone}`}>
-                            {SOURCE_LABELS[key] || key}: {formatSource(value)}
-                        </span>
-                    ))}
                 </div>
             </div>
         </section>
@@ -296,7 +278,7 @@ export default function PlayerComparePage() {
                         <span className="font-bold text-amber-400 text-xl">{data.player2.name}</span>
                     </div>
                     <p className="mt-4 text-sm text-neutral-400">
-                        Scope: {data.comparison?.scope || 'Top 5 leagues + UEFA Champions League'}
+                        Scope: {data.comparison?.scope || ''}
                     </p>
                 </div>
 
@@ -313,9 +295,16 @@ export default function PlayerComparePage() {
                     />
                 </div>
 
-                <div className="mt-10 grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div className="mt-10 grid grid-cols-1 md:grid-cols-4 gap-4">
                     <div className="rounded-2xl border border-slate-800 bg-slate-900/80 p-4">
-                        <p className="text-xs uppercase tracking-[0.18em] text-slate-500">Overall Delta</p>
+                        <p className="text-xs uppercase tracking-[0.18em] text-slate-500">Rating Delta</p>
+                        <p className="mt-2 text-2xl font-black text-white">
+                            {formatDelta(data.comparison?.metric_deltas?.overall_rating, 0)}
+                        </p>
+                        <p className="text-xs text-slate-400 mt-1">EA-FC style 50-95 scale.</p>
+                    </div>
+                    <div className="rounded-2xl border border-slate-800 bg-slate-900/80 p-4">
+                        <p className="text-xs uppercase tracking-[0.18em] text-slate-500">Overall Score Delta</p>
                         <p className="mt-2 text-2xl font-black text-white">
                             {formatDelta(data.comparison?.metric_deltas?.overall_score, 1)}
                         </p>
@@ -360,16 +349,6 @@ export default function PlayerComparePage() {
                             </p>
                         </div>
 
-                        {data.comparison?.fallback_active ? (
-                            <div className="mt-4 rounded-xl border border-amber-400/30 bg-amber-500/10 p-3 text-sm text-amber-100 flex items-start gap-2">
-                                <AlertTriangle className="w-4 h-4 mt-0.5" />
-                                <p>
-                                    One or more providers are missing data. Fallback values from local DB or match history are
-                                    being used where available.
-                                </p>
-                            </div>
-                        ) : null}
-
                         <div className="mt-5 overflow-x-auto">
                             <table className="w-full text-sm">
                                 <thead>
@@ -381,22 +360,40 @@ export default function PlayerComparePage() {
                                     </tr>
                                 </thead>
                                 <tbody>
-                                    {scoreRows.map((row) => (
-                                        <tr key={row.key} className="border-b border-slate-900/80">
-                                            <td className="py-2 pr-3 text-slate-200">{row.label}</td>
-                                            <td className="py-2 pr-3 text-slate-400">{row.weight}%</td>
-                                            <td className="py-2 pr-3 text-slate-200">
-                                                {row.left?.available
-                                                    ? `${formatNumber(row.left.contribution, 1)} pts`
-                                                    : 'N/A'}
-                                            </td>
-                                            <td className="py-2 text-slate-200">
-                                                {row.right?.available
-                                                    ? `${formatNumber(row.right.contribution, 1)} pts`
-                                                    : 'N/A'}
-                                            </td>
-                                        </tr>
-                                    ))}
+                                    {scoreRows.map((row) => {
+                                        const isRatingRow = row.key === 'rating';
+
+                                        const renderCell = (
+                                            component: PlayerComparisonScoreComponent | undefined,
+                                            playerForFallback: ComparedPlayer,
+                                        ) => {
+                                            if (component?.available) {
+                                                return `${formatNumber(component.contribution, 1)} pts`;
+                                            }
+                                            // For the Season Rating row, fall back to the EA-FC overall_rating
+                                            // we already compute and surface elsewhere on the page.
+                                            if (isRatingRow) {
+                                                const overall = playerForFallback.stats?.overall_rating;
+                                                if (typeof overall === 'number') {
+                                                    return `${overall} ovr`;
+                                                }
+                                            }
+                                            return 'N/A';
+                                        };
+
+                                        return (
+                                            <tr key={row.key} className="border-b border-slate-900/80">
+                                                <td className="py-2 pr-3 text-slate-200">{row.label}</td>
+                                                <td className="py-2 pr-3 text-slate-400">{row.weight}%</td>
+                                                <td className="py-2 pr-3 text-slate-200">
+                                                    {renderCell(row.left, data.player1)}
+                                                </td>
+                                                <td className="py-2 text-slate-200">
+                                                    {renderCell(row.right, data.player2)}
+                                                </td>
+                                            </tr>
+                                        );
+                                    })}
                                 </tbody>
                             </table>
                         </div>

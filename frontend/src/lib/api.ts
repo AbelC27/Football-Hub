@@ -708,6 +708,7 @@ export type ComparedPlayer = Omit<PlayerDetailed, 'stats'> & {
     yellow_cards?: number | null;
     red_cards?: number | null;
     goal_involvements?: number | null;
+    overall_rating?: number | null;
   };
 };
 
@@ -721,6 +722,7 @@ export interface PlayerComparisonResponse {
       rating?: number | null;
       minutes?: number | null;
       goal_involvements?: number | null;
+      overall_rating?: number | null;
       overall_score?: number | null;
     };
     score_winner_id?: number | null;

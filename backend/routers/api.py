@@ -2065,7 +2065,8 @@ def get_team_details(team_id: int, db: Session = Depends(get_db)):
             "name": player.name,
             "position": player.position,
             "nationality": player.nationality,
-            "height": player.height
+            "height": player.height,
+            "photo_url": player.photo_url,
         }
         
         # Map position to group
@@ -2146,6 +2147,7 @@ def get_players(
             "position": player.position,
             "nationality": player.nationality,
             "height": player.height,
+            "photo_url": player.photo_url,
             "team": {
                 "id": team.id,
                 "name": team.name,
@@ -2178,6 +2180,7 @@ def get_player_details(player_id: int, db: Session = Depends(get_db)):
         "position": player.position,
         "nationality": player.nationality,
         "height": player.height,
+        "photo_url": player.photo_url,
         "team": {
             "id": team.id,
             "name": team.name,
@@ -2328,6 +2331,23 @@ _POSITION_BASELINES = {
     "MID": 64.0,
     "FWD": 64.0,
 }
+
+
+def _overall_rating_to_match_rating(overall: Optional[int]) -> Optional[float]:
+    """
+    Convert the 50..95 EA-FC overall to a 1..10 match-rating scale (the
+    one api-sports' ``games.rating`` would normally use). We map the 50..95
+    band to roughly 5.5..8.5 — a "10" is reserved for true man-of-the-match
+    territory which we can't infer from a season-aggregate, so we cap at 8.5.
+
+    Returns None if ``overall`` is None.
+    """
+    if overall is None:
+        return None
+    clamped = max(50, min(95, int(overall)))
+    # Linear map: 50 -> 5.5, 95 -> 8.5.
+    rating = 5.5 + (clamped - 50) * (3.0 / 45.0)
+    return round(rating, 2)
 
 
 def _resolve_position_group(player: Player) -> str:
@@ -2736,6 +2756,33 @@ def get_player_comparison(player1_id: int, player2_id: int, db: Session = Depend
     enriched_p1["stats"] = stats_p1
     enriched_p2["stats"] = stats_p2
 
+    # FIFA-style 50..95 overall rating, mirrors the value the player card
+    # shows on /player/{id}. Card counts come from the existing performance
+    # snapshot so the number stays consistent across views.
+    rating_p1 = _compute_overall_rating(
+        db,
+        player1,
+        yellow_cards=performance_p1.get("yellow_cards") or 0,
+        red_cards=performance_p1.get("red_cards") or 0,
+    )
+    rating_p2 = _compute_overall_rating(
+        db,
+        player2,
+        yellow_cards=performance_p2.get("yellow_cards") or 0,
+        red_cards=performance_p2.get("red_cards") or 0,
+    )
+    enriched_p1["stats"]["overall_rating"] = rating_p1
+    enriched_p2["stats"]["overall_rating"] = rating_p2
+
+    # Fall back the season "rating" tile (1..10 match-rating scale, the one
+    # api-sports normally fills) to a proxy derived from the overall_rating
+    # whenever the upstream value is missing. Without this the card just
+    # shows "N/A" forever on the free tier.
+    if enriched_p1["stats"].get("rating") is None:
+        enriched_p1["stats"]["rating"] = _overall_rating_to_match_rating(rating_p1)
+    if enriched_p2["stats"].get("rating") is None:
+        enriched_p2["stats"]["rating"] = _overall_rating_to_match_rating(rating_p2)
+
     enriched_p1["recent_form"] = performance_p1.get("recent_form", [])
     enriched_p2["recent_form"] = performance_p2.get("recent_form", [])
 
@@ -2766,6 +2813,10 @@ def get_player_comparison(player1_id: int, player2_id: int, db: Session = Depend
                 "goal_involvements": _calculate_metric_delta(
                     stats_p1.get("goal_involvements"),
                     stats_p2.get("goal_involvements"),
+                ),
+                "overall_rating": _calculate_metric_delta(
+                    rating_p1,
+                    rating_p2,
                 ),
                 "overall_score": _calculate_metric_delta(score_p1.get("value"), score_p2.get("value"), precision=1),
             },

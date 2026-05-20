@@ -1,6 +1,5 @@
 # xG Feature Documentation
 
-- Scope: Top 5 leagues + UEFA Champions League
 - Model mode: xg_proxy
 - Trained at (UTC): 2026-04-18T19:03:57Z
 - Granularity note: No shot-level table with coordinates was found; using aggregate match statistics (shots, possession, corners, events) for an explicitly labeled xG proxy.
