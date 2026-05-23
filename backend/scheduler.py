@@ -1,6 +1,8 @@
 import logging
 import os
 import datetime
+from typing import Dict, List, Optional
+
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.interval import IntervalTrigger
 try:
@@ -13,6 +15,7 @@ try:
     from backend.models import Match, League, Team
     from backend.generate_predictions import generate_predictions
     from backend.services.news_triggers import run_post_match_news, run_pre_derby_news
+    from backend.services.live_broadcaster import enqueue_match_updates
 except ImportError:
     from database import SessionLocal
     from services.football_data_org import (
@@ -23,6 +26,7 @@ except ImportError:
     from models import Match, League, Team
     from generate_predictions import generate_predictions
     from services.news_triggers import run_post_match_news, run_pre_derby_news
+    from services.live_broadcaster import enqueue_match_updates
 import pytz
 
 # Configure logging
@@ -88,11 +92,31 @@ def _upsert_team(db, team_data, league_id: int):
     return team
 
 
+LIVE_STATUSES = {"LIVE", "HT", "ET", "P", "1H", "2H"}
+
+
+def _derive_live_minute(start_time: datetime.datetime) -> Optional[int]:
+    """
+    Estimate elapsed minutes when the provider doesn't expose `minute`.
+    Naive: doesn't know about HT/ET/stoppages, but always better than `None`
+    on the UI. Clamped to 1..120.
+    """
+    if start_time is None:
+        return None
+    now = datetime.datetime.now(tz=pytz.UTC)
+    if start_time.tzinfo is None:
+        start_time = start_time.replace(tzinfo=pytz.UTC)
+    elapsed = int((now - start_time).total_seconds() // 60)
+    if elapsed < 1:
+        return None
+    return max(1, min(elapsed, 120))
+
+
 def _persist_matches(db, matches_data):
-    """Upsert leagues, teams, and matches given a list of API match payloads."""
     scanned_count = len(matches_data)
     inserted_count = 0
     updated_count = 0
+    broadcast_payloads: List[Dict[str, object]] = []
 
     for match_data in matches_data:
         parsed = parse_match_from_fd(match_data)
@@ -108,6 +132,16 @@ def _persist_matches(db, matches_data):
 
         start_time = _parse_fixture_datetime(fixture["date"])
         status = fixture["status"]["short"]
+        provider_minute = fixture.get("minute")
+
+        if status in LIVE_STATUSES:
+            current_minute = (
+                provider_minute
+                if provider_minute is not None
+                else _derive_live_minute(start_time)
+            )
+        else:
+            current_minute = None
 
         existing_match = db.query(Match).filter(Match.id == fixture["id"]).first()
 
@@ -120,13 +154,25 @@ def _persist_matches(db, matches_data):
                     start_time=start_time,
                     status=status,
                     home_score=goals["home"],
-                    away_score=goals["away"]
+                    away_score=goals["away"],
+                    current_minute=current_minute,
                 )
             )
             inserted_count += 1
+            if status in LIVE_STATUSES:
+                broadcast_payloads.append(
+                    {
+                        "match_id": fixture["id"],
+                        "status": status,
+                        "home_score": goals["home"],
+                        "away_score": goals["away"],
+                        "current_minute": current_minute,
+                    }
+                )
             continue
 
         changed = False
+        score_or_status_changed = False
 
         if existing_match.home_team_id != teams["home"]["id"]:
             existing_match.home_team_id = teams["home"]["id"]
@@ -140,28 +186,55 @@ def _persist_matches(db, matches_data):
         if existing_match.status != status:
             existing_match.status = status
             changed = True
+            score_or_status_changed = True
         if existing_match.home_score != goals["home"]:
             existing_match.home_score = goals["home"]
             changed = True
+            score_or_status_changed = True
         if existing_match.away_score != goals["away"]:
             existing_match.away_score = goals["away"]
+            changed = True
+            score_or_status_changed = True
+        if existing_match.current_minute != current_minute:
+            existing_match.current_minute = current_minute
             changed = True
 
         if changed:
             updated_count += 1
 
-    return scanned_count, inserted_count, updated_count
+        # Push any update for currently-live matches (so the timer ticks),
+        # plus any state transition (kickoff, goal, FT) regardless of liveness.
+        if status in LIVE_STATUSES or score_or_status_changed:
+            broadcast_payloads.append(
+                {
+                    "match_id": fixture["id"],
+                    "status": status,
+                    "home_score": goals["home"],
+                    "away_score": goals["away"],
+                    "current_minute": current_minute,
+                }
+            )
+
+    return scanned_count, inserted_count, updated_count, broadcast_payloads
 
 
 def _sync_competition_live_window(db, competition_code: str):
     """
-    Lightweight, frequent sync: only fetches matches in the current live
-    window (yesterday..tomorrow). One API call per competition, well under
-    the free-tier 100-row limit.
+    Lightweight, frequent sync: covers a rolling window that reaches a few
+    days into the past and one day into the future.
+
+    The backward reach matters: if a match transitions NS -> FT while we
+    were offline (or the provider published the FT status late), a tight
+    +/-1 day window would never see it again and the row would stay stuck
+    on `NS` forever. We default to a 7-day lookback so the next sync after
+    a downtime catches every recent fixture, while staying well under the
+    free-tier 100-row response cap.
     """
     today = datetime.datetime.utcnow().date()
-    date_from = (today - datetime.timedelta(days=1)).strftime("%Y-%m-%d")
-    date_to = (today + datetime.timedelta(days=1)).strftime("%Y-%m-%d")
+    lookback_days = int(os.getenv("FOOTBALL_DATA_SYNC_LOOKBACK_DAYS", "7"))
+    lookahead_days = int(os.getenv("FOOTBALL_DATA_SYNC_LOOKAHEAD_DAYS", "1"))
+    date_from = (today - datetime.timedelta(days=lookback_days)).strftime("%Y-%m-%d")
+    date_to = (today + datetime.timedelta(days=lookahead_days)).strftime("%Y-%m-%d")
     matches_data = fetch_competition_matches(
         competition_code,
         date_from=date_from,
@@ -176,26 +249,24 @@ def _sync_competition_full_season(db, competition_code: str):
     return _persist_matches(db, matches_data)
 
 def update_live_matches():
-    """
-    Tight live-window sync (~yesterday..tomorrow) for all configured competitions.
-    Cheap on API quota so it can run frequently to keep scores fresh.
-    """
     logger.info("Starting live-window sync for competitions: %s", ", ".join(COMPETITIONS_TO_REFRESH))
     db = SessionLocal()
 
     total_scanned = 0
     total_inserted = 0
     total_updated = 0
+    aggregated_broadcasts: List[Dict[str, object]] = []
 
     try:
         for competition_code in COMPETITIONS_TO_REFRESH:
             try:
-                scanned, inserted, updated = _sync_competition_live_window(db, competition_code)
+                scanned, inserted, updated, broadcasts = _sync_competition_live_window(db, competition_code)
                 db.commit()
 
                 total_scanned += scanned
                 total_inserted += inserted
                 total_updated += updated
+                aggregated_broadcasts.extend(broadcasts)
             except Exception:
                 db.rollback()
                 logger.exception("Failed live-window sync for competition %s", competition_code)
@@ -206,6 +277,13 @@ def update_live_matches():
             total_inserted,
             total_updated
         )
+
+        if aggregated_broadcasts:
+            try:
+                enqueue_match_updates(aggregated_broadcasts)
+            except Exception:
+                # Broadcast best-effort: never let a WS issue break the sync.
+                logger.exception("Failed to enqueue %s live updates", len(aggregated_broadcasts))
     except Exception:
         db.rollback()
         logger.exception("Error updating live matches")
@@ -229,7 +307,7 @@ def sync_full_season():
     try:
         for competition_code in COMPETITIONS_TO_REFRESH:
             try:
-                scanned, inserted, updated = _sync_competition_full_season(db, competition_code)
+                scanned, inserted, updated, _broadcasts = _sync_competition_full_season(db, competition_code)
                 db.commit()
 
                 total_scanned += scanned
@@ -262,11 +340,6 @@ def run_predictions():
 
 def start_scheduler():
     scheduler = BackgroundScheduler(timezone=pytz.UTC)
-
-    # Optional full-season sync. Off by default so the backend doesn't burn
-    # API quota on every startup. Run `python seed_football_data_org.py`
-    # manually when you need to backfill, or set
-    # ENABLE_FULL_SEASON_SYNC=1 in .env to re-enable the daily job.
     if os.getenv("ENABLE_FULL_SEASON_SYNC", "").strip().lower() in {"1", "true", "yes"}:
         scheduler.add_job(
             sync_full_season,
@@ -283,8 +356,6 @@ def start_scheduler():
             "or set ENABLE_FULL_SEASON_SYNC=1 to re-enable."
         )
 
-    # Update matches every 60 seconds. Uses a tight ±1 day window so it stays
-    # cheap on the football-data.org free tier (10 req/min).
     scheduler.add_job(
         update_live_matches,
         trigger=IntervalTrigger(seconds=60),
@@ -294,7 +365,6 @@ def start_scheduler():
         next_run_time=datetime.datetime.now(tz=pytz.UTC) + datetime.timedelta(seconds=10),
     )
     
-    # Generate predictions every hour
     scheduler.add_job(
         run_predictions,
         trigger=IntervalTrigger(hours=1),
@@ -303,7 +373,6 @@ def start_scheduler():
         replace_existing=True
     )
 
-    # AI news: scan finished matches every 5 minutes for fresh post-match reports.
     scheduler.add_job(
         run_post_match_news,
         trigger=IntervalTrigger(minutes=5),
@@ -312,7 +381,6 @@ def start_scheduler():
         replace_existing=True,
     )
 
-    # AI news: scan for upcoming derbies (< 24h away) once per hour.
     scheduler.add_job(
         run_pre_derby_news,
         trigger=IntervalTrigger(hours=1),

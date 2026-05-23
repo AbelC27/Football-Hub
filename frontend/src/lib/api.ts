@@ -80,6 +80,7 @@ export interface MatchExperience {
       away?: number | null;
     };
     competition?: MatchExperienceCompetition | null;
+    current_minute?: number | null;
   };
   teams: {
     home: {

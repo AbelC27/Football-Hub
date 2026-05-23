@@ -377,6 +377,9 @@ export function MatchExperienceView({
             <div className="space-y-6 bg-white p-6 dark:bg-neutral-950 md:p-8">
               <div className="flex flex-wrap items-center gap-2">
                 <Badge tone={statusTone}>{data.header.status}</Badge>
+                {typeof data.header.current_minute === "number" && data.header.current_minute > 0 ? (
+                  <Badge tone={statusTone}>{data.header.current_minute}'</Badge>
+                ) : null}
                 {data.header.competition?.name ? <Badge>{data.header.competition.name}</Badge> : null}
                 {data.header.competition?.country ? <Badge>{data.header.competition.country}</Badge> : null}
               </div>

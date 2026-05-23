@@ -24,8 +24,6 @@ class ConnectionManager:
                 self.disconnect(connection)
 
     async def shutdown(self):
-        """Close every active WebSocket. Called on app shutdown so uvicorn
-        --reload doesn't hang waiting for live clients to disconnect."""
         for connection in list(self.active_connections):
             try:
                 await connection.close(code=1001)  # 1001 = going away

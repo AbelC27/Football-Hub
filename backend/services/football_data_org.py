@@ -377,14 +377,25 @@ def parse_match_from_fd(match_data):
     
     api_status = match_data['status']
     short_status = status_map.get(api_status, api_status)
-    
+
+    # Pull elapsed minute when reported. football-data.org occasionally
+    # exposes it inline on /competitions/{code}/matches, but most of the
+    # time it ships only on /matches/{id}. We treat it as best-effort:
+    # when missing, the persistence layer falls back to a derived value.
+    raw_minute = match_data.get('minute') or match_data.get('elapsed')
+    try:
+        current_minute = int(raw_minute) if raw_minute is not None else None
+    except (TypeError, ValueError):
+        current_minute = None
+
     return {
         'fixture': {
             'id': match_data['id'],
             'date': match_data['utcDate'],
             'status': {
                 'short': short_status
-            }
+            },
+            'minute': current_minute,
         },
         'teams': {
             'home': {

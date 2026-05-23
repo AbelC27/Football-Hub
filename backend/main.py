@@ -17,10 +17,14 @@ try:
     from backend.routers import api, ws, standings, auth_router, user_router, fantasy_router, search_router, news_router
     from backend.scheduler import start_scheduler
     from backend.connection_manager import manager as ws_manager
+    from backend.services.live_broadcaster import start_consumer as start_live_consumer
+    from backend.services.live_broadcaster import stop_consumer as stop_live_consumer
 except ImportError:
     from routers import api, ws, standings, auth_router, user_router, fantasy_router, search_router, news_router
     from scheduler import start_scheduler
     from connection_manager import manager as ws_manager
+    from services.live_broadcaster import start_consumer as start_live_consumer
+    from services.live_broadcaster import stop_consumer as stop_live_consumer
 
 app.include_router(api.router)
 app.include_router(ws.router)
@@ -32,8 +36,12 @@ app.include_router(search_router.router)
 app.include_router(news_router.router)
 
 @app.on_event("startup")
-def startup_event():
+async def startup_event():
     global scheduler_instance
+    # Start the WS broadcast consumer FIRST so any updates the scheduler
+    # publishes in its initial run can be delivered as soon as a client
+    # connects.
+    start_live_consumer()
     if scheduler_instance is None:
         scheduler_instance = start_scheduler()
 
@@ -44,6 +52,7 @@ async def shutdown_event():
     # Close any open WebSocket connections so uvicorn --reload doesn't hang
     # waiting for them to drain.
     await ws_manager.shutdown()
+    await stop_live_consumer()
     if scheduler_instance is not None:
         scheduler_instance.shutdown(wait=False)
         scheduler_instance = None

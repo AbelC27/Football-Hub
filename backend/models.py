@@ -78,7 +78,10 @@ class Match(Base):
     status = Column(String) # LIVE, FT, NS
     home_score = Column(Integer, nullable=True)
     away_score = Column(Integer, nullable=True)
-    
+    # Elapsed minute reported by the live data provider. Only meaningful
+    # while `status` is LIVE/HT/ET/P; cleared (set to NULL) otherwise.
+    current_minute = Column(Integer, nullable=True)
+
     prediction = relationship("Prediction", back_populates="match", uselist=False)
 
 class Prediction(Base):
@@ -373,3 +376,25 @@ class ProviderIdMap(Base):
         UniqueConstraint('provider', 'entity_type', 'local_id', name='uq_provider_local'),
         UniqueConstraint('provider', 'entity_type', 'external_id', name='uq_provider_external'),
     )
+
+
+class TeamEloSnapshot(Base):
+    """Pre/post-match Elo snapshot for a team in a given fixture.
+
+    Allows joining Match -> snapshot to fetch the *pre-match* Elo for both
+    sides at training time without leaking information from the same match
+    into the feature row.
+    """
+
+    __tablename__ = "team_elo_snapshots"
+    __table_args__ = (
+        UniqueConstraint("team_id", "match_id", name="uq_team_elo_match"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    team_id = Column(Integer, ForeignKey("teams.id"), nullable=False, index=True)
+    match_id = Column(Integer, ForeignKey("matches.id"), nullable=False, index=True)
+    pre_match_elo = Column(Float, nullable=False)
+    post_match_elo = Column(Float, nullable=False)
+    is_home = Column(Boolean, nullable=False)
+    snapshot_at = Column(DateTime, nullable=False)

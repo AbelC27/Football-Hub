@@ -98,6 +98,7 @@ class MatchExperienceHeader(BaseModel):
     status: str
     score: MatchExperienceScore
     competition: Optional[MatchExperienceCompetition] = None
+    current_minute: Optional[int] = None
 
 
 class MatchExperienceTeam(BaseModel):

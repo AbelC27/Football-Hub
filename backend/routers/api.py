@@ -1356,6 +1356,7 @@ def get_match_experience(match_id: int, db: Session = Depends(get_db)):
                 "home": match.home_score,
                 "away": match.away_score,
             },
+            "current_minute": match.current_minute,
             "competition": {
                 "id": competition.id,
                 "name": competition.name,

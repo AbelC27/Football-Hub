@@ -197,6 +197,10 @@ export default function MatchDetailsPage() {
                 header: {
                     ...current.header,
                     status: lastMessage.data.status || current.header.status,
+                    current_minute:
+                        typeof lastMessage.data.current_minute === 'number'
+                            ? lastMessage.data.current_minute
+                            : current.header.current_minute,
                     score: {
                         home:
                             typeof lastMessage.data.home_score === 'number'
