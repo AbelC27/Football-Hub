@@ -338,6 +338,36 @@ def run_predictions():
     except Exception as e:
         logger.error(f"Error generating predictions: {e}")
 
+
+def run_weekly_model_retraining():
+    """Weekly retrain of the 1X2 match-outcome model.
+
+    Steps (executed in a worker thread):
+      1. Rebuild Elo snapshots from the latest finished matches.
+      2. Re-run the training pipeline (temporal split, isotonic, baselines).
+      3. Persist the new artifacts. The inference singleton picks up the
+         changes via its `mtime` cache without requiring a server restart.
+
+    Failure here never crashes the scheduler; we just log the trace and
+    keep serving predictions from the previously-trained artifacts.
+    """
+    logger.info("Starting weekly retraining of match-outcome model...")
+    try:
+        # Imported lazily so a missing AI dependency never breaks the
+        # rest of the scheduler.
+        try:
+            from backend.ai.build_elo_history import main as rebuild_elo
+            from backend.ai.train import main as train_model
+        except ImportError:
+            from ai.build_elo_history import main as rebuild_elo  # type: ignore[no-redef]
+            from ai.train import main as train_model  # type: ignore[no-redef]
+
+        rebuild_elo()
+        train_model()
+        logger.info("Weekly retraining completed.")
+    except Exception:
+        logger.exception("Weekly retraining failed (artifacts left untouched)")
+
 def start_scheduler():
     scheduler = BackgroundScheduler(timezone=pytz.UTC)
     if os.getenv("ENABLE_FULL_SEASON_SYNC", "").strip().lower() in {"1", "true", "yes"}:
@@ -388,6 +418,21 @@ def start_scheduler():
         name='AI News - Pre Derby',
         replace_existing=True,
     )
+
+    # Retrain the 1X2 match-outcome model once per week. Cheap to run
+    # (~30s on the current dataset) and ensures the network stays in sync
+    # with new finished matches and updated Elo ratings without manual
+    # intervention. Disabled when ENABLE_WEEKLY_RETRAIN=0 to make local
+    # development less noisy.
+    if os.getenv("ENABLE_WEEKLY_RETRAIN", "1").strip().lower() not in {"0", "false", "no"}:
+        scheduler.add_job(
+            run_weekly_model_retraining,
+            trigger=IntervalTrigger(days=7),
+            id='retrain_match_outcome_model',
+            name='Retrain 1X2 Model',
+            replace_existing=True,
+        )
+        logger.info("Weekly model retraining job registered.")
 
     scheduler.start()
     logger.info("Background scheduler started.")

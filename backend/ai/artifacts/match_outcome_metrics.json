@@ -1,0 +1,218 @@
+{
+  "trained_at_utc": "2026-05-23T21:57:49Z",
+  "feature_columns": [
+    "home_elo_pre",
+    "away_elo_pre",
+    "elo_diff",
+    "elo_ratio",
+    "home_form_points_5",
+    "away_form_points_5",
+    "form_diff_5",
+    "home_home_form_5",
+    "away_away_form_5",
+    "venue_form_diff",
+    "home_goals_for_avg_10",
+    "away_goals_for_avg_10",
+    "home_goals_against_avg_10",
+    "away_goals_against_avg_10",
+    "home_goal_diff_avg_10",
+    "away_goal_diff_avg_10",
+    "home_btts_rate_10",
+    "away_btts_rate_10",
+    "home_form_vs_strong_5",
+    "away_form_vs_strong_5",
+    "rest_days_diff",
+    "is_weekend",
+    "h2h_home_win_rate",
+    "h2h_draw_rate",
+    "h2h_avg_goals",
+    "league_premier_league",
+    "league_la_liga",
+    "league_bundesliga",
+    "league_serie_a",
+    "league_ligue_1",
+    "league_ucl",
+    "league_other"
+  ],
+  "train": {
+    "rows": 1611,
+    "first_match": "2025-08-15 17:00:00",
+    "last_match": "2026-04-05 13:00:00",
+    "label_counts": {
+      "HOME_WIN": 725,
+      "DRAW": 391,
+      "AWAY_WIN": 495
+    }
+  },
+  "test": {
+    "rows": 403,
+    "first_match": "2026-04-05 13:00:00",
+    "last_match": "2026-05-23 19:00:00",
+    "label_counts": {
+      "HOME_WIN": 175,
+      "DRAW": 108,
+      "AWAY_WIN": 120
+    }
+  },
+  "models": {
+    "pytorch_raw": {
+      "train": {
+        "rows": 1611,
+        "accuracy": 0.5201738050900062,
+        "log_loss": 0.9871282014327741,
+        "brier_home_win": 0.21580326557159424,
+        "brier_draw": 0.17894862592220306,
+        "brier_away_win": 0.19333307445049286,
+        "confusion_matrix": [
+          [
+            595,
+            35,
+            95
+          ],
+          [
+            252,
+            46,
+            93
+          ],
+          [
+            245,
+            53,
+            197
+          ]
+        ]
+      },
+      "test": {
+        "rows": 403,
+        "accuracy": 0.48883374689826303,
+        "log_loss": 1.0677665257744637,
+        "brier_home_win": 0.23896430432796478,
+        "brier_draw": 0.19645899534225464,
+        "brier_away_win": 0.19930045306682587,
+        "confusion_matrix": [
+          [
+            142,
+            10,
+            23
+          ],
+          [
+            75,
+            10,
+            23
+          ],
+          [
+            66,
+            9,
+            45
+          ]
+        ]
+      }
+    },
+    "pytorch_isotonic": {
+      "train": {
+        "rows": 1611,
+        "accuracy": 0.5294847920546245,
+        "log_loss": 0.9573726414251088,
+        "brier_home_win": 0.2123968005180359,
+        "brier_draw": 0.17395223677158356,
+        "brier_away_win": 0.187652587890625,
+        "confusion_matrix": [
+          [
+            581,
+            17,
+            127
+          ],
+          [
+            237,
+            34,
+            120
+          ],
+          [
+            239,
+            18,
+            238
+          ]
+        ]
+      },
+      "test": {
+        "rows": 403,
+        "accuracy": 0.4838709677419355,
+        "log_loss": 1.2004968890987608,
+        "brier_home_win": 0.24463091790676117,
+        "brier_draw": 0.19792459905147552,
+        "brier_away_win": 0.19878637790679932,
+        "confusion_matrix": [
+          [
+            133,
+            12,
+            30
+          ],
+          [
+            70,
+            11,
+            27
+          ],
+          [
+            64,
+            5,
+            51
+          ]
+        ]
+      }
+    },
+    "lightgbm": {
+      "status": "lightgbm_unavailable: OSError"
+    },
+    "logistic_regression": {
+      "train": {
+        "rows": 1611,
+        "accuracy": 0.47051520794537555,
+        "log_loss": 1.0250240000889856,
+        "brier_home_win": 0.23279125649403573,
+        "brier_draw": 0.18677843255456164,
+        "brier_away_win": 0.19474634642762614,
+        "confusion_matrix": [
+          [
+            375,
+            202,
+            148
+          ],
+          [
+            116,
+            141,
+            134
+          ],
+          [
+            125,
+            128,
+            242
+          ]
+        ]
+      },
+      "test": {
+        "rows": 403,
+        "accuracy": 0.4267990074441687,
+        "log_loss": 1.0758887009458438,
+        "brier_home_win": 0.24465573630712867,
+        "brier_draw": 0.20205375037066972,
+        "brier_away_win": 0.19938671281229442,
+        "confusion_matrix": [
+          [
+            76,
+            56,
+            43
+          ],
+          [
+            30,
+            45,
+            33
+          ],
+          [
+            32,
+            37,
+            51
+          ]
+        ]
+      }
+    }
+  }
+}

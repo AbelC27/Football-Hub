@@ -10,6 +10,7 @@ torch
 numpy
 pandas
 scikit-learn
+lightgbm
 websockets
 supabase
 httpx
