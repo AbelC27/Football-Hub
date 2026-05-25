@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useMemo } from 'react';
 import { Match } from '../lib/api';
 import { PredictionBadge } from './PredictionBadge';
 import { Card, CardContent } from './ui/card';
@@ -12,11 +12,20 @@ interface MatchCardProps {
 }
 
 export const MatchCard: React.FC<MatchCardProps> = ({ match }) => {
-    const [formattedDate, setFormattedDate] = useState<string>('');
-
-    useEffect(() => {
-        // Only format date on client to avoid hydration mismatch
-        setFormattedDate(new Date(match.start_time).toLocaleString());
+    const formattedDate = useMemo(() => {
+        // Backend stores UTC but may omit the 'Z' suffix — ensure JS treats it as UTC
+        const utcTime = match.start_time.endsWith('Z') || match.start_time.includes('+')
+            ? match.start_time
+            : match.start_time + 'Z';
+        return new Date(utcTime).toLocaleString('en-GB', {
+            timeZone: 'Europe/Bucharest',
+            weekday: 'short',
+            month: 'short',
+            day: '2-digit',
+            hour: '2-digit',
+            minute: '2-digit',
+            hour12: true,
+        });
     }, [match.start_time]);
 
     return (

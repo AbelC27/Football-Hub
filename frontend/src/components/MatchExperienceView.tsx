@@ -39,12 +39,16 @@ interface MatchExperienceViewProps {
 }
 
 function formatKickoff(value: string) {
-  return new Date(value).toLocaleString(undefined, {
+  // Backend stores UTC but may omit the 'Z' suffix — ensure JS treats it as UTC
+  const utcTime = value.endsWith('Z') || value.includes('+') ? value : value + 'Z';
+  return new Date(utcTime).toLocaleString("en-GB", {
+    timeZone: "Europe/Bucharest",
     weekday: "short",
     month: "short",
     day: "2-digit",
     hour: "2-digit",
     minute: "2-digit",
+    hour12: true,
   });
 }
 

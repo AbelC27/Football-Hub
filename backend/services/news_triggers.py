@@ -46,10 +46,6 @@ UPCOMING_STATUSES = {"NS", "TBD"}
 PRE_DERBY_WINDOW_HOURS = 24
 
 
-# ---------------------------------------------------------------------------
-# Post-match generator
-# ---------------------------------------------------------------------------
-
 def _existing_dedupe_keys(db: Session, keys: Iterable[str]) -> set[str]:
     keys = list(keys)
     if not keys:
@@ -66,8 +62,6 @@ def run_post_match_news() -> None:
     """Scan recently-finished matches and generate one article per match."""
     db = SessionLocal()
     try:
-        # Look at fixtures finished in the last 6 hours so we don't backfill the
-        # entire historical season every startup.
         cutoff = datetime.datetime.now(tz=pytz.UTC) - datetime.timedelta(hours=6)
         finished = (
             db.query(Match)
@@ -113,11 +107,6 @@ def run_post_match_news() -> None:
     finally:
         db.close()
 
-
-# ---------------------------------------------------------------------------
-# Pre-derby generator
-# ---------------------------------------------------------------------------
-
 def run_pre_derby_news() -> None:
     """Find derby fixtures kicking off in < 24h and generate previews."""
     db = SessionLocal()
@@ -125,8 +114,6 @@ def run_pre_derby_news() -> None:
         now = datetime.datetime.now(tz=pytz.UTC)
         window_end = now + datetime.timedelta(hours=PRE_DERBY_WINDOW_HOURS)
 
-        # Note: Match.start_time may be stored naive in some installs. We pass
-        # the boundaries as datetimes; SQLAlchemy/Postgres will coerce.
         upcoming = (
             db.query(Match)
             .filter(Match.status.in_(UPCOMING_STATUSES))

@@ -37,12 +37,18 @@ const getStatusText = (status: string) => {
 export const EnhancedMatchCard: React.FC<EnhancedMatchCardProps> = ({ match, events = null }) => {
     const isLive = ['LIVE', 'HT', 'ET', 'P'].includes(match.status);
     const isFinished = match.status === 'FT';
-    const formattedDate = new Date(match.start_time).toLocaleString('en-US', {
+    // Backend stores UTC but may omit the 'Z' suffix — ensure JS treats it as UTC
+    const utcTime = match.start_time.endsWith('Z') || match.start_time.includes('+')
+        ? match.start_time
+        : match.start_time + 'Z';
+    const formattedDate = new Date(utcTime).toLocaleString('en-GB', {
+        timeZone: 'Europe/Bucharest',
         weekday: 'short',
         month: 'short',
         day: 'numeric',
         hour: '2-digit',
-        minute: '2-digit'
+        minute: '2-digit',
+        hour12: true,
     });
 
     // Determine winner for finished matches

@@ -116,11 +116,6 @@ class MatchOutcomeInferenceService:
             exp = np.exp(shifted)
             probs = exp / exp.sum()
 
-        # Isotonic calibrators are stored alongside the model for the
-        # comparison study, but on the current dataset they degrade
-        # log-loss (small training fold + already well-shaped softmax).
-        # Inference therefore returns the temperature-scaled softmax.
-        # Set TERRABALL_ENABLE_ISOTONIC=1 to layer isotonic on top.
         import os as _os
 
         if _os.getenv("TERRABALL_ENABLE_ISOTONIC", "").strip() == "1":
@@ -143,3 +138,5 @@ def predict_for_match(db, match) -> Optional[Tuple[float, float, float]]:
     if features is None:
         return None
     return match_outcome_inference_service.predict(features)
+
+

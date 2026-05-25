@@ -54,7 +54,6 @@ class EloMatchUpdate:
 
 
 def _expected_score(rating_a: float, rating_b: float) -> float:
-    """Standard Elo expectancy: probability A beats B given the ratings."""
     return 1.0 / (1.0 + math.pow(10.0, (rating_b - rating_a) / 400.0))
 
 

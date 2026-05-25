@@ -14,7 +14,7 @@ except ImportError:
     from schemas import User as UserSchema
 from pydantic import BaseModel
 
-router = APIRouter(prefix="/api/v1", tags=["user"])
+router = APIRouter(prefix="/api/v1/user", tags=["user"])
 
 class TeamResponse(BaseModel):
     id: int
@@ -38,16 +38,21 @@ class FavoritesUpdate(BaseModel):
     favorite_player_id: int | None = None
 
 @router.get("/teams", response_model=List[TeamResponse])
-def get_teams(db: Session = Depends(get_db)):
-    teams = db.query(Team).all()
+def get_teams_for_profile(db: Session = Depends(get_db)):
+    teams = db.query(Team).order_by(Team.name.asc()).all()
     return teams
 
 @router.get("/players", response_model=List[PlayerResponse])
-def get_players(db: Session = Depends(get_db)):
-    players = db.query(Player).all()
-    return players
+def get_players_for_profile(
+    team_id: int = None,
+    db: Session = Depends(get_db),
+):
+    query = db.query(Player)
+    if team_id:
+        query = query.filter(Player.team_id == team_id)
+    return query.order_by(Player.name.asc()).all()
 
-@router.put("/user/favorites", response_model=UserSchema)
+@router.put("/favorites", response_model=UserSchema)
 def update_favorites(
     favorites: FavoritesUpdate,
     current_user: User = Depends(get_current_user),
