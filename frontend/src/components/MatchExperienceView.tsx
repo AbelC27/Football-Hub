@@ -378,7 +378,7 @@ export function MatchExperienceView({
               <div className="flex flex-wrap items-center gap-2">
                 <Badge tone={statusTone}>{data.header.status}</Badge>
                 {typeof data.header.current_minute === "number" && data.header.current_minute > 0 ? (
-                  <Badge tone={statusTone}>{data.header.current_minute}'</Badge>
+                  <Badge tone={statusTone}>{data.header.current_minute}</Badge>
                 ) : null}
                 {data.header.competition?.name ? <Badge>{data.header.competition.name}</Badge> : null}
                 {data.header.competition?.country ? <Badge>{data.header.competition.country}</Badge> : null}
@@ -611,7 +611,7 @@ export function MatchExperienceView({
                           key={sub.id}
                           className="grid grid-cols-[auto_1fr] items-center gap-3 rounded-lg border border-neutral-200 bg-white px-3 py-2 dark:border-neutral-800 dark:bg-neutral-900"
                         >
-                          <Badge tone="warning">{sub.minute}'</Badge>
+                          <Badge tone="warning">{sub.minute}</Badge>
                           <div>
                             <p className="text-sm font-medium text-neutral-900 dark:text-neutral-100">{sub.player_name || "Unknown Player"}</p>
                             <p className="text-xs text-neutral-500 dark:text-neutral-400">{sub.detail || "Substitution event"}</p>

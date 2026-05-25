@@ -278,7 +278,6 @@ export default function PlayerComparePage() {
                         <span className="font-bold text-amber-400 text-xl">{data.player2.name}</span>
                     </div>
                     <p className="mt-4 text-sm text-neutral-400">
-                        Scope: {data.comparison?.scope || ''}
                     </p>
                 </div>
 
@@ -327,9 +326,6 @@ export default function PlayerComparePage() {
                 <div className="mt-8 grid grid-cols-1 xl:grid-cols-5 gap-6">
                     <section className="xl:col-span-2 rounded-3xl border border-slate-800 bg-slate-900/70 p-6">
                         <h2 className="text-xl font-bold text-white">Performance Radar</h2>
-                        <p className="mt-2 text-sm text-slate-400">
-                            Nivo radar visualization of normalized season and form metrics.
-                        </p>
                         <div className="mt-4">
                             <PlayerComparisonRadar player1={data.player1} player2={data.player2} />
                         </div>
@@ -337,16 +333,8 @@ export default function PlayerComparePage() {
 
                     <section className="xl:col-span-3 rounded-3xl border border-slate-800 bg-slate-900/70 p-6">
                         <h2 className="text-xl font-bold text-white">Overall Score Formula</h2>
-                        <p className="mt-2 text-sm text-slate-300">
-                            {data.score_formula ||
-                                'Weighted score from rating, goals, assists, minutes, discipline, and recent form.'}
-                        </p>
                         <div className="mt-2 flex items-start gap-2 text-xs text-slate-400">
                             <Info className="w-4 h-4 mt-0.5" />
-                            <p>
-                                Missing metrics are excluded from score calculation and remaining weights are re-scaled to
-                                keep the formula transparent.
-                            </p>
                         </div>
 
                         <div className="mt-5 overflow-x-auto">

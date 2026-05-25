@@ -95,10 +95,7 @@ def search_all(
     q: str = Query(..., min_length=1, description="Search query"),
     db: Session = Depends(get_db)
 ):
-    """
-    Combined search for both teams and players.
-    Returns top 5 results from each category.
-    """
+ 
     # Search teams
     teams_query = db.query(Team).filter(Team.name.ilike(f"%{q}%")).limit(5).all()
     teams_results = []

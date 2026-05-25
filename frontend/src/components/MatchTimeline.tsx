@@ -63,7 +63,7 @@ export const MatchTimeline: React.FC<{ matchId: number }> = ({ matchId }) => {
                 >
                     <div className="text-2xl">{getEventIcon(event.event_type)}</div>
                     <div className="flex-1">
-                        <div className="font-bold text-sm">{event.minute}'</div>
+                        <div className="font-bold text-sm">{event.minute}</div>
                         <div className="text-sm">{event.player_name}</div>
                         {event.detail && <div className="text-xs opacity-75">{event.detail}</div>}
                     </div>

@@ -73,7 +73,7 @@ export const SearchBar = ({
             {/* Search hint */}
             {!query && (
                 <p className="mt-3 text-center text-sm text-gray-500 dark:text-gray-400">
-                    Try searching for "Manchester", "Ronaldo", or your favorite team
+                    Try searching for Manchester, Ronaldo, or your favorite team
                 </p>
             )}
         </div>
