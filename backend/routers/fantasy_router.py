@@ -638,6 +638,76 @@ def _compute_and_persist_matchday_points(
         .all()
     )
 
+    # If there are no finished fixtures for this matchday but we already have
+    # persisted history (e.g. seeded data for a future demo matchday), keep the
+    # stored entries instead of recomputing them to zero.
+    if not match_rows:
+        existing_history = (
+            db.query(FantasyPointsHistory)
+            .filter(
+                FantasyPointsHistory.squad_id == squad.id,
+                FantasyPointsHistory.user_id == user_id,
+                FantasyPointsHistory.matchday_key == matchday_date,
+            )
+            .count()
+        )
+        if existing_history > 0:
+            existing_summary = (
+                db.query(FantasyMatchdaySummary)
+                .filter(
+                    FantasyMatchdaySummary.squad_id == squad.id,
+                    FantasyMatchdaySummary.matchday_key == matchday_date,
+                )
+                .first()
+            )
+
+            history_rows = (
+                db.query(FantasyPointsHistory, Player)
+                .outerjoin(Player, FantasyPointsHistory.player_id == Player.id)
+                .filter(
+                    FantasyPointsHistory.squad_id == squad.id,
+                    FantasyPointsHistory.user_id == user_id,
+                    FantasyPointsHistory.matchday_key == matchday_date,
+                )
+                .order_by(FantasyPointsHistory.id.asc())
+                .all()
+            )
+
+            history_payload = [
+                {
+                    "player_id": history_row.player_id,
+                    "player_name": player.name if player else None,
+                    "match_id": history_row.match_id,
+                    "points": int(history_row.points),
+                    "reason": history_row.reason,
+                }
+                for history_row, player in history_rows
+            ]
+
+            captain_player_id = (
+                existing_summary.captain_player_id
+                if existing_summary
+                else (captain_pick.player_id if captain_pick else None)
+            )
+            captain_player = None
+            if captain_player_id:
+                captain_player = (
+                    db.query(Player).filter(Player.id == captain_player_id).first()
+                )
+
+            return {
+                "matchday_key": matchday_date,
+                "total_points": int(existing_summary.total_points)
+                if existing_summary
+                else sum(entry["points"] for entry in history_payload),
+                "transfer_penalty": int(existing_summary.transfer_penalty)
+                if existing_summary
+                else 0,
+                "captain_player_id": captain_player_id,
+                "captain_player_name": captain_player.name if captain_player else None,
+                "entries": history_payload,
+            }
+
     match_ids = [match.id for match in match_rows]
     events_by_match: Dict[int, List[MatchEvent]] = {match_id: [] for match_id in match_ids}
 
@@ -759,11 +829,18 @@ def _compute_and_persist_matchday_points(
             }
         )
 
+    captain_player = None
+    if captain_pick:
+        captain_player = (
+            db.query(Player).filter(Player.id == captain_pick.player_id).first()
+        )
+
     return {
         "matchday_key": matchday_date,
         "total_points": int(total_points),
         "transfer_penalty": int(transfer_penalty_points),
         "captain_player_id": captain_pick.player_id if captain_pick else None,
+        "captain_player_name": captain_player.name if captain_player else None,
         "entries": history_payload,
     }
 
@@ -1251,11 +1328,18 @@ def get_matchday_points(
             }
         )
 
+    captain_player = None
+    if summary.captain_player_id:
+        captain_player = (
+            db.query(Player).filter(Player.id == summary.captain_player_id).first()
+        )
+
     return {
         "matchday_key": matchday_date,
         "total_points": int(summary.total_points),
         "transfer_penalty": int(summary.transfer_penalty),
         "captain_player_id": summary.captain_player_id,
+        "captain_player_name": captain_player.name if captain_player else None,
         "entries": entries,
     }
 

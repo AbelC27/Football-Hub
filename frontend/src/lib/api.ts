@@ -814,7 +814,7 @@ export interface FantasySquadPlayer {
 
 export interface FantasySquadResponse {
   squad_id: number;
-  user_id: number;
+  user_id: string;
   budget_cap: number;
   budget_spent: number;
   budget_remaining: number;
@@ -875,6 +875,7 @@ export interface FantasyMatchdayPointsResponse {
   total_points: number;
   transfer_penalty: number;
   captain_player_id?: number | null;
+  captain_player_name?: string | null;
   entries: FantasyPointsHistoryEntry[];
 }
 

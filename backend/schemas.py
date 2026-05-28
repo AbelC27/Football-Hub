@@ -351,7 +351,7 @@ class FantasySquadPlayerResponse(BaseModel):
 
 class FantasySquadResponse(BaseModel):
     squad_id: int
-    user_id: int
+    user_id: str
     budget_cap: float
     budget_spent: float
     budget_remaining: float
@@ -418,6 +418,7 @@ class FantasyMatchdayPointsResponse(BaseModel):
     total_points: int
     transfer_penalty: int
     captain_player_id: Optional[int] = None
+    captain_player_name: Optional[str] = None
     entries: List[FantasyPointsHistoryEntryResponse]
 
 

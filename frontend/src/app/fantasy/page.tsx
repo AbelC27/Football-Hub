@@ -10,7 +10,6 @@ import { toast } from "sonner";
 
 import { useAuth } from "@/context/AuthContext";
 import {
-  FantasyMatchdayPick,
   FantasyPlayerPoolItem,
   FantasySquadPlayer,
   FantasyTransferItem,
@@ -90,7 +89,9 @@ async function legacyFetch<T>(path: string): Promise<T> {
   return res.json();
 }
 
-function normalizeBenchOrders(picks: FantasyMatchdayPick[]): FantasyMatchdayPick[] {
+function normalizeBenchOrders<T extends { role: "starter" | "bench"; bench_order?: number | null }>(
+  picks: T[]
+): T[] {
   const starters = picks
     .filter((pick) => pick.role === "starter")
     .map((pick) => ({ ...pick, bench_order: null }));
@@ -354,7 +355,7 @@ export default function FantasyPage() {
   const savePicksMutation = useMutation({
     mutationFn: async (values: FantasyMatchdayPicksFormValues) => {
       if (!token) throw new Error("Authentication token missing");
-      const normalized = normalizeBenchOrders(values.picks as FantasyMatchdayPick[]);
+      const normalized = normalizeBenchOrders(values.picks);
       return saveFantasyMatchdayPicks(token, matchdayKey, normalized);
     },
     onSuccess: () => {
@@ -956,7 +957,11 @@ export default function FantasyPage() {
                   <div className="grid gap-3 md:grid-cols-3">
                     <MetricCard title="Total Points" value={pointsQuery.data.total_points} subtitle={pointsQuery.data.matchday_key} />
                     <MetricCard title="Transfer Penalty" value={pointsQuery.data.transfer_penalty} subtitle="Already deducted" />
-                    <MetricCard title="Captain" value={pointsQuery.data.captain_player_id ?? "N/A"} subtitle="Player ID" />
+                    <MetricCard
+                      title="Captain"
+                      value={pointsQuery.data.captain_player_name || (pointsQuery.data.captain_player_id ? `#${pointsQuery.data.captain_player_id}` : "N/A")}
+                      subtitle={pointsQuery.data.captain_player_name && pointsQuery.data.captain_player_id ? `Player #${pointsQuery.data.captain_player_id}` : "Captain pick"}
+                    />
                   </div>
 
                   <div className="max-h-[420px] overflow-auto rounded-xl border border-neutral-200 dark:border-neutral-800">
