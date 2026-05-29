@@ -512,18 +512,21 @@ def main():
     train_probs_cal = _apply_isotonic(train_probs, calibrators)
     test_probs_cal = _apply_isotonic(test_probs, calibrators)
 
-    # 7. LightGBM
+    # 7. LightGBM (tuned)
     lgb_metrics = None
     lgb_model = None
+    lgb_test_probs = None
+    lgb_train_probs = None
     try:
         import lightgbm as lgb
         lgb_clf = lgb.LGBMClassifier(
-            objective="multiclass", num_class=3, n_estimators=500,
-            learning_rate=0.03, num_leaves=63, min_child_samples=30,
-            random_state=SEED, verbosity=-1,
+            objective="multiclass", num_class=3, n_estimators=800,
+            learning_rate=0.02, num_leaves=63, min_child_samples=50,
+            subsample=0.8, colsample_bytree=0.8, reg_alpha=0.1, reg_lambda=1.0,
+            random_state=SEED, verbosity=-1, class_weight="balanced",
         )
         lgb_clf.fit(X_train_s, y_train, eval_set=[(X_test_s, y_test)],
-                    callbacks=[lgb.early_stopping(stopping_rounds=30, verbose=False)])
+                    callbacks=[lgb.early_stopping(stopping_rounds=50, verbose=False)])
         lgb_test_probs = lgb_clf.predict_proba(X_test_s)
         lgb_train_probs = lgb_clf.predict_proba(X_train_s)
         lgb_metrics = {"train": _evaluate(lgb_train_probs, y_train), "test": _evaluate(lgb_test_probs, y_test)}
@@ -541,21 +544,16 @@ def main():
     logreg_metrics = {"train": _evaluate(logreg_train_probs, y_train), "test": _evaluate(logreg_test_probs, y_test)}
     print(f"\nLogReg:   acc={logreg_metrics['test']['accuracy']:.4f} logloss={logreg_metrics['test']['log_loss']:.4f}")
 
-    # 9. Ensemble (average probabilities from available models)
-    ensemble_probs_test = test_probs_cal.copy()
-    ensemble_probs_train = train_probs_cal.copy()
-    n_models = 1
+    # 9. Ensemble (weighted: PyTorch is better calibrated, LightGBM adds diversity)
     if lgb_metrics:
-        ensemble_probs_test = ensemble_probs_test + lgb_test_probs
-        ensemble_probs_train = ensemble_probs_train + lgb_train_probs
-        n_models += 1
-    ensemble_probs_test = ensemble_probs_test + logreg_test_probs
-    ensemble_probs_train = ensemble_probs_train + logreg_train_probs
-    n_models += 1
-    ensemble_probs_test /= n_models
-    ensemble_probs_train /= n_models
+        # Weighted: 60% PyTorch calibrated + 40% LightGBM
+        ensemble_probs_test = 0.6 * test_probs_cal + 0.4 * lgb_test_probs
+        ensemble_probs_train = 0.6 * train_probs_cal + 0.4 * lgb_train_probs
+    else:
+        ensemble_probs_test = test_probs_cal
+        ensemble_probs_train = train_probs_cal
     ensemble_metrics = {"train": _evaluate(ensemble_probs_train, y_train), "test": _evaluate(ensemble_probs_test, y_test)}
-    print(f"Ensemble ({n_models} models): acc={ensemble_metrics['test']['accuracy']:.4f} logloss={ensemble_metrics['test']['log_loss']:.4f}")
+    print(f"Ensemble (weighted): acc={ensemble_metrics['test']['accuracy']:.4f} logloss={ensemble_metrics['test']['log_loss']:.4f}")
 
     # 10. Evaluate & report
     pytorch_raw = {"train": _evaluate(train_probs, y_train), "test": _evaluate(test_probs, y_test)}
