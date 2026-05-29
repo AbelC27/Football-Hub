@@ -78,7 +78,7 @@ FEATURE_COLUMNS: List[str] = [
 
 SEED = 42
 TEST_RATIO = 0.15
-EPOCHS = 200
+EPOCHS = 350
 BATCH_SIZE = 64
 LEARNING_RATE = 0.001
 WEIGHT_DECAY = 1e-4
@@ -452,8 +452,8 @@ def main():
     model = FootballPredictor(input_size=len(FEATURE_COLUMNS), hidden1=96, hidden2=48, hidden3=24, dropout=0.20)
     weights = torch.tensor([1.0, 1.6, 1.1], dtype=torch.float32)
     criterion = nn.CrossEntropyLoss(weight=weights)
-    optimizer = optim.Adam(model.parameters(), lr=0.0005, weight_decay=1e-4)
-    scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=EPOCHS, eta_min=1e-5)
+    optimizer = optim.Adam(model.parameters(), lr=0.0003, weight_decay=1e-4)
+    scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=EPOCHS, eta_min=5e-6)
 
     train_loader = DataLoader(
         TensorDataset(torch.from_numpy(X_train_s.copy()).float(), torch.from_numpy(y_train.copy()).long()),
@@ -485,7 +485,7 @@ def main():
             patience_counter = 0
         else:
             patience_counter += 1
-            if patience_counter >= 60:
+            if patience_counter >= 80:
                 print(f"Early stop at epoch {epoch+1}")
                 break
 
