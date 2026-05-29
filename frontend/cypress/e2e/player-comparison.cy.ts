@@ -109,14 +109,11 @@ const MOCK_COMPARISON_RESPONSE = {
 
 describe("Player Comparison — /compare/players/42/vs/77", () => {
   beforeEach(() => {
-    // Stub Supabase auth (comparison page doesn't require auth, but
-    // the AuthProvider still fires a session check on mount)
     cy.intercept("GET", "**/auth/v1/user", {
       statusCode: 401,
       body: { message: "not authenticated" },
     });
 
-    // Mock the player comparison API endpoint
     cy.intercept("GET", `${API}/players/42/vs/77`, {
       statusCode: 200,
       body: MOCK_COMPARISON_RESPONSE,
@@ -156,13 +153,10 @@ describe("Player Comparison — /compare/players/42/vs/77", () => {
     // The radar section has a heading "Performance Radar"
     cy.contains("Performance Radar").should("be.visible");
 
-    // The @nivo/radar ResponsiveRadar renders an SVG inside the radar container
-    // The container div has a fixed height class (h-[360px])
     cy.get("section")
       .contains("Performance Radar")
       .closest("section")
       .within(() => {
-        // Nivo renders an SVG element for the radar chart
         cy.get("svg").should("exist");
       });
   });

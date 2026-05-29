@@ -63,7 +63,6 @@ function buildPlayerPool() {
 
 describe("Fantasy Page — Budget Constraint Validation", () => {
   beforeEach(() => {
-    // --- Auth intercepts ---
     cy.intercept("POST", SUPABASE_TOKEN_URL, {
       statusCode: 200,
       body: MOCK_SESSION,
@@ -79,7 +78,6 @@ describe("Fantasy Page — Budget Constraint Validation", () => {
       body: MOCK_USER_PROFILE,
     }).as("fetchMe");
 
-    // --- Fantasy API intercepts ---
     cy.intercept("GET", `${API}/fantasy/player-mode/rules`, {
       statusCode: 200,
       body: {
@@ -103,7 +101,6 @@ describe("Fantasy Page — Budget Constraint Validation", () => {
       body: buildPlayerPool(),
     }).as("pool");
 
-    // Existing squad: 14 players at 7.0 each = 98.0 spent
     cy.intercept("GET", `${API}/fantasy/player-mode/squad`, {
       statusCode: 200,
       body: {
@@ -126,14 +123,12 @@ describe("Fantasy Page — Budget Constraint Validation", () => {
       body: { picks: [] },
     });
 
-    // --- Log in first to establish Supabase session ---
     cy.visit("/login");
     cy.get('input[name="email"]').type("fantasy@terraball.dev");
     cy.get('input[name="password"]').type("TestPass123!");
     cy.get('button[type="submit"]').click();
     cy.wait("@signIn");
 
-    // Navigate to fantasy page
     cy.visit("/fantasy");
     cy.contains("Fantasy Manager", { timeout: 10000 }).should("be.visible");
   });
@@ -160,9 +155,6 @@ describe("Fantasy Page — Budget Constraint Validation", () => {
     cy.contains("button", "Save Squad").click();
 
     // The sonner toast renders with the validation failure message.
-    // The toast contains either the specific "Budget exceeded" message
-    // (if zodResolver maps it to selected_players) or the fallback
-    // "Squad validation failed" message.
     cy.get('[data-sonner-toast]', { timeout: 5000 })
       .should("be.visible")
       .and("contain.text", "validation failed");
