@@ -1,0 +1,50 @@
+{
+  "version": "next_event_ranker_v1",
+  "scope": "Top 5 leagues + UEFA Champions League",
+  "trained_at_utc": "2026-05-29T16:26:32Z",
+  "feature_count": 31,
+  "tasks": {
+    "goal": {
+      "train_samples": 312,
+      "test_samples": 78,
+      "train_metrics": {
+        "samples": 312,
+        "top1": 0.1858974358974359,
+        "top3": 0.4967948717948718,
+        "log_loss": 2.586029455901621,
+        "brier": 0.04117451797407146,
+        "ece_10_bin": 0.009110707782047714
+      },
+      "test_metrics": {
+        "samples": 78,
+        "top1": 0.28205128205128205,
+        "top3": 0.5384615384615384,
+        "log_loss": 2.5656024418072017,
+        "brier": 0.040961612606651834,
+        "ece_10_bin": 0.01613515441873846
+      },
+      "note": "Binary ranker with per-snapshot probability normalization."
+    },
+    "assist": {
+      "train_samples": 265,
+      "test_samples": 66,
+      "train_metrics": {
+        "samples": 265,
+        "top1": 0.1660377358490566,
+        "top3": 0.4226415094339623,
+        "log_loss": 2.755729952986282,
+        "brier": 0.0419561580714041,
+        "ece_10_bin": 0.0008261878629661865
+      },
+      "test_metrics": {
+        "samples": 66,
+        "top1": 0.10606060606060606,
+        "top3": 0.3333333333333333,
+        "log_loss": 2.8135522148208114,
+        "brier": 0.04226456041083292,
+        "ece_10_bin": 0.0058334466217879214
+      },
+      "note": "Binary ranker with per-snapshot probability normalization."
+    }
+  }
+}
