@@ -230,3 +230,26 @@ def get_fixtures_by_date(
 
     payload = _get("/fixtures", params=params)
     return payload.get("response", []) or []
+
+
+# ---------------------------------------------------------------------------
+# World Cup helpers
+# ---------------------------------------------------------------------------
+
+WC_APISPORTS_LEAGUE_ID = 1  # FIFA World Cup in api-sports
+
+
+def get_wc_fixtures_by_date(date_iso: str) -> List[Dict[str, Any]]:
+    """Fetch WC fixtures for a date (YYYY-MM-DD). API calls: 1."""
+    payload = _get("/fixtures", params={
+        "league": WC_APISPORTS_LEAGUE_ID,
+        "season": 2026,
+        "date": date_iso,
+    })
+    return payload.get("response", []) or []
+
+
+def get_fixture_statistics(fixture_id: int) -> List[Dict[str, Any]]:
+    """Fetch team statistics for a fixture. API calls: 1."""
+    payload = _get("/fixtures/statistics", params={"fixture": fixture_id})
+    return payload.get("response", []) or []

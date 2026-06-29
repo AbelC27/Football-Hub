@@ -35,7 +35,7 @@ logger = logging.getLogger(__name__)
 
 COMPETITIONS_TO_REFRESH = [
     code.strip().upper()
-    for code in os.getenv("FOOTBALL_DATA_COMPETITIONS", "PL,PD,BL1,SA,FL1").split(",")
+    for code in os.getenv("FOOTBALL_DATA_COMPETITIONS", "PL,PD,BL1,SA,FL1,WC").split(",")
     if code.strip()
 ]
 
@@ -151,11 +151,14 @@ def _persist_matches(db, matches_data):
                     id=fixture["id"],
                     home_team_id=teams["home"]["id"],
                     away_team_id=teams["away"]["id"],
+                    league_id=league.id,
                     start_time=start_time,
                     status=status,
                     home_score=goals["home"],
                     away_score=goals["away"],
                     current_minute=current_minute,
+                    stage=fixture.get("stage"),
+                    group_name=fixture.get("group_name"),
                 )
             )
             inserted_count += 1
@@ -174,6 +177,9 @@ def _persist_matches(db, matches_data):
         changed = False
         score_or_status_changed = False
 
+        if existing_match.league_id != league.id:
+            existing_match.league_id = league.id
+            changed = True
         if existing_match.home_team_id != teams["home"]["id"]:
             existing_match.home_team_id = teams["home"]["id"]
             changed = True
@@ -197,6 +203,16 @@ def _persist_matches(db, matches_data):
             score_or_status_changed = True
         if existing_match.current_minute != current_minute:
             existing_match.current_minute = current_minute
+            changed = True
+
+        # Tournament metadata (stage / group) — update if provided
+        new_stage = fixture.get("stage")
+        new_group = fixture.get("group_name")
+        if new_stage and existing_match.stage != new_stage:
+            existing_match.stage = new_stage
+            changed = True
+        if new_group and existing_match.group_name != new_group:
+            existing_match.group_name = new_group
             changed = True
 
         if changed:
@@ -339,6 +355,138 @@ def run_predictions():
         logger.error(f"Error generating predictions: {e}")
 
 
+def enrich_wc_match_stats():
+    """Fetch match statistics from API-Football for recently finished WC matches."""
+    try:
+        from services.apisports import (
+            get_wc_fixtures_by_date, get_fixture_statistics,
+            calls_used_today, ApisportsQuotaExceeded,
+        )
+    except ImportError:
+        try:
+            from backend.services.apisports import (
+                get_wc_fixtures_by_date, get_fixture_statistics,
+                calls_used_today, ApisportsQuotaExceeded,
+            )
+        except ImportError:
+            logger.warning("apisports module not available for WC enrichment")
+            return
+
+    try:
+        from models import MatchStatistics
+    except ImportError:
+        from backend.models import MatchStatistics
+
+    if calls_used_today() >= 90:
+        logger.info("WC enrichment skipped: API-Football budget near limit (%d/100)", calls_used_today())
+        return
+
+    WC_LEAGUE_ID = 2000
+    db = SessionLocal()
+    try:
+        # Find recently finished WC matches without stats
+        finished_wc = (
+            db.query(Match)
+            .filter(
+                Match.league_id == WC_LEAGUE_ID,
+                Match.status.in_(list({"FT", "AET", "PEN"})),
+            )
+            .all()
+        )
+
+        matches_needing_stats = []
+        for m in finished_wc:
+            has_stats = db.query(MatchStatistics).filter(MatchStatistics.match_id == m.id).first()
+            if not has_stats:
+                matches_needing_stats.append(m)
+
+        if not matches_needing_stats:
+            return
+
+        logger.info("WC enrichment: %d matches need stats", len(matches_needing_stats))
+
+        for match in matches_needing_stats:
+            if calls_used_today() >= 90:
+                break
+
+            # Find API-Football fixture by date
+            match_date = match.start_time.strftime("%Y-%m-%d") if match.start_time else None
+            if not match_date:
+                continue
+
+            try:
+                fixtures = get_wc_fixtures_by_date(match_date)
+            except ApisportsQuotaExceeded:
+                break
+
+            # Match by team names
+            home_team = db.query(Team).filter(Team.id == match.home_team_id).first()
+            away_team = db.query(Team).filter(Team.id == match.away_team_id).first()
+            if not home_team or not away_team:
+                continue
+
+            af_fixture_id = None
+            home_name_lower = home_team.name.lower()
+            away_name_lower = away_team.name.lower()
+
+            for fx in fixtures:
+                fx_teams = fx.get("teams", {})
+                fx_home = (fx_teams.get("home", {}).get("name") or "").lower()
+                fx_away = (fx_teams.get("away", {}).get("name") or "").lower()
+                if (home_name_lower in fx_home or fx_home in home_name_lower) and \
+                   (away_name_lower in fx_away or fx_away in away_name_lower):
+                    af_fixture_id = fx.get("fixture", {}).get("id")
+                    break
+
+            if not af_fixture_id:
+                continue
+
+            try:
+                stats_resp = get_fixture_statistics(af_fixture_id)
+            except ApisportsQuotaExceeded:
+                break
+
+            if len(stats_resp) < 2:
+                continue
+
+            def _stat_val(team_stats, stat_name):
+                for s in team_stats.get("statistics", []):
+                    if s.get("type") == stat_name:
+                        val = s.get("value")
+                        if isinstance(val, str):
+                            val = val.replace("%", "")
+                        try:
+                            return int(val) if val is not None else 0
+                        except (ValueError, TypeError):
+                            return 0
+                return 0
+
+            home_stats = stats_resp[0]
+            away_stats = stats_resp[1]
+
+            db.add(MatchStatistics(
+                match_id=match.id,
+                possession_home=_stat_val(home_stats, "Ball Possession"),
+                possession_away=_stat_val(away_stats, "Ball Possession"),
+                shots_on_home=_stat_val(home_stats, "Shots on Goal"),
+                shots_on_away=_stat_val(away_stats, "Shots on Goal"),
+                shots_off_home=_stat_val(home_stats, "Shots off Goal"),
+                shots_off_away=_stat_val(away_stats, "Shots off Goal"),
+                corners_home=_stat_val(home_stats, "Corner Kicks"),
+                corners_away=_stat_val(away_stats, "Corner Kicks"),
+                fouls_home=_stat_val(home_stats, "Fouls"),
+                fouls_away=_stat_val(away_stats, "Fouls"),
+            ))
+            db.commit()
+            logger.info("WC enrichment: stats saved for match %d", match.id)
+
+    except Exception:
+        db.rollback()
+        logger.exception("WC enrichment failed")
+    finally:
+        db.close()
+
+
 def run_weekly_model_retraining():
     """Weekly retrain of the 1X2 match-outcome model.
 
@@ -433,6 +581,15 @@ def start_scheduler():
             replace_existing=True,
         )
         logger.info("Weekly model retraining job registered.")
+
+    # WC match stats enrichment — runs every 10 minutes, budget-aware
+    scheduler.add_job(
+        enrich_wc_match_stats,
+        trigger=IntervalTrigger(minutes=10),
+        id='enrich_wc_stats',
+        name='WC Match Stats Enrichment',
+        replace_existing=True,
+    )
 
     scheduler.start()
     logger.info("Background scheduler started.")

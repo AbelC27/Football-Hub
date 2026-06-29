@@ -82,6 +82,10 @@ class Match(Base):
     # while `status` is LIVE/HT/ET/P; cleared (set to NULL) otherwise.
     current_minute = Column(Integer, nullable=True)
 
+    # Tournament metadata (World Cup, Champions League knockout, etc.)
+    stage = Column(String, nullable=True)       # e.g. GROUP_STAGE, LAST_16, QUARTER_FINALS
+    group_name = Column(String, nullable=True)  # e.g. "Group A"
+
     prediction = relationship("Prediction", back_populates="match", uselist=False)
 
 class Prediction(Base):

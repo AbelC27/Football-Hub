@@ -396,6 +396,8 @@ def parse_match_from_fd(match_data):
                 'short': short_status
             },
             'minute': current_minute,
+            'stage': match_data.get('stage'),
+            'group_name': match_data.get('group'),
         },
         'teams': {
             'home': {

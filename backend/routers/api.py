@@ -63,6 +63,7 @@ SUPPORTED_COMPETITION_LEAGUE_IDS = {
     2019, # Serie A (football-data.org)
     2015, # Ligue 1 (football-data.org)
     2001, # Champions League (football-data.org)
+    2000, # FIFA World Cup (football-data.org)
 }
 
 SUPPORTED_LEAGUE_NAME_TOKENS = (
@@ -72,6 +73,7 @@ SUPPORTED_LEAGUE_NAME_TOKENS = (
     "serie a",
     "ligue 1",
     "champions league",
+    "world cup",
 )
 
 FINISHED_MATCH_STATUSES = {"FT", "AET", "PEN"}
@@ -1529,6 +1531,75 @@ def get_match_xg_live(
 
     return payload
 
+
+def _wc_match_scorers(match, db: Session):
+    """Return goal events for a WC match using tournament scorers data.
+
+    Since free-tier APIs don't provide per-match goal detail for WC 2026,
+    we identify which tournament scorers belong to the two teams in this match
+    and return them as goal events. This gives the UI "who scores for each team"
+    context on every match card.
+    """
+    try:
+        from backend.services.football_data_org import fetch_competition_scorers
+    except ImportError:
+        from services.football_data_org import fetch_competition_scorers
+
+    if match.status not in {"FT", "AET", "PEN"}:
+        return []
+
+    home_id = match.home_team_id
+    away_id = match.away_team_id
+
+    scorers = fetch_competition_scorers("WC")
+    if not scorers:
+        return []
+
+    events = []
+    event_id = match.id * 1000  # synthetic IDs
+
+    for entry in scorers:
+        team = entry.get("team", {})
+        player = entry.get("player", {})
+        team_id = team.get("id")
+
+        if team_id not in (home_id, away_id):
+            continue
+
+        goals = entry.get("goals", 0) or 0
+        assists = entry.get("assists", 0) or 0
+
+        if goals > 0:
+            event_id += 1
+            events.append({
+                "id": event_id,
+                "minute": None,
+                "event_type": "Goal",
+                "team_id": team_id,
+                "player_id": player.get("id"),
+                "player_name": player.get("name"),
+                "assist_player_id": None,
+                "assist_player_name": None,
+                "detail": f"{goals} goal{'s' if goals != 1 else ''} this tournament",
+            })
+
+        if assists > 0:
+            event_id += 1
+            events.append({
+                "id": event_id,
+                "minute": None,
+                "event_type": "Assist",
+                "team_id": team_id,
+                "player_id": player.get("id"),
+                "player_name": player.get("name"),
+                "assist_player_id": None,
+                "assist_player_name": None,
+                "detail": f"{assists} assist{'s' if assists != 1 else ''} this tournament",
+            })
+
+    return events
+
+
 @router.get("/match/{match_id}/events")
 def get_match_events(match_id: int, db: Session = Depends(get_db)):
     """Return match events for ``match_id``.
@@ -1590,7 +1661,11 @@ def get_match_events(match_id: int, db: Session = Depends(get_db)):
     if match.status not in {"FT", "AET", "PEN"}:
         return []
 
-    # PL-only for now.
+    # PL-only for live enrichment. WC uses tournament scorers as fallback.
+    WC_LEAGUE_ID = 2000
+    if match.league_id == WC_LEAGUE_ID:
+        return _wc_match_scorers(match, db)
+
     if match.league_id != PL_LOCAL_LEAGUE_ID:
         return []
 
@@ -1889,7 +1964,122 @@ def get_match_statistics(match_id: int, db: Session = Depends(get_db)):
 
 @router.get("/league/{league_id}/standings")
 def get_league_standings(league_id: int, db: Session = Depends(get_db)):
-    """Compute standings from finished league matches for fresher results."""
+    """Compute standings from finished matches. Tournament-aware: returns grouped tables for WC."""
+
+    # Detect tournament: check if any match for this league has group_name set
+    is_tournament = (
+        db.query(Match.id)
+        .filter(Match.league_id == league_id, Match.group_name.isnot(None))
+        .first()
+    ) is not None
+
+    if is_tournament:
+        return _compute_tournament_standings(league_id, db)
+
+    return _compute_league_standings(league_id, db)
+
+
+def _compute_tournament_standings(league_id: int, db: Session):
+    """Compute group-stage standings for a tournament (e.g. World Cup)."""
+    from collections import defaultdict
+
+    matches = (
+        db.query(Match)
+        .filter(
+            Match.league_id == league_id,
+            Match.stage == "GROUP_STAGE",
+            Match.status.in_(list(FINISHED_MATCH_STATUSES)),
+            Match.home_score.isnot(None),
+            Match.away_score.isnot(None),
+        )
+        .order_by(Match.start_time.asc())
+        .all()
+    )
+
+    # Also grab scheduled group matches to know which teams belong to which group
+    all_group_matches = (
+        db.query(Match)
+        .filter(Match.league_id == league_id, Match.group_name.isnot(None))
+        .all()
+    )
+
+    # Build team→group mapping from all group matches
+    team_group: dict = {}
+    for m in all_group_matches:
+        if m.home_team_id and m.group_name:
+            team_group[m.home_team_id] = m.group_name
+        if m.away_team_id and m.group_name:
+            team_group[m.away_team_id] = m.group_name
+
+    # Stats per team
+    stats: dict = defaultdict(lambda: {
+        "played": 0, "won": 0, "drawn": 0, "lost": 0,
+        "goals_for": 0, "goals_against": 0, "form": [],
+    })
+
+    for match in matches:
+        h, a = match.home_team_id, match.away_team_id
+        hg, ag = match.home_score, match.away_score
+
+        stats[h]["played"] += 1
+        stats[a]["played"] += 1
+        stats[h]["goals_for"] += hg
+        stats[h]["goals_against"] += ag
+        stats[a]["goals_for"] += ag
+        stats[a]["goals_against"] += hg
+
+        if hg > ag:
+            stats[h]["won"] += 1; stats[a]["lost"] += 1
+            stats[h]["form"].append("W"); stats[a]["form"].append("L")
+        elif hg < ag:
+            stats[a]["won"] += 1; stats[h]["lost"] += 1
+            stats[h]["form"].append("L"); stats[a]["form"].append("W")
+        else:
+            stats[h]["drawn"] += 1; stats[a]["drawn"] += 1
+            stats[h]["form"].append("D"); stats[a]["form"].append("D")
+
+    # Load team info
+    all_team_ids = list(team_group.keys())
+    teams_db = db.query(Team).filter(Team.id.in_(all_team_ids)).all() if all_team_ids else []
+    team_map = {t.id: t for t in teams_db}
+
+    # Build grouped output
+    groups: dict = defaultdict(list)
+    for team_id, group_name in team_group.items():
+        s = stats[team_id]
+        team = team_map.get(team_id)
+        pts = s["won"] * 3 + s["drawn"]
+        gd = s["goals_for"] - s["goals_against"]
+        groups[group_name].append({
+            "position": 0,
+            "team_id": team_id,
+            "team_name": team.name if team else f"Team {team_id}",
+            "team_logo": team.logo_url if team else "",
+            "played": s["played"],
+            "won": s["won"],
+            "drawn": s["drawn"],
+            "lost": s["lost"],
+            "goals_for": s["goals_for"],
+            "goals_against": s["goals_against"],
+            "goal_difference": gd,
+            "points": pts,
+            "form": "".join(s["form"][-3:]),
+        })
+
+    # Sort each group and assign positions
+    result_groups = []
+    for name in sorted(groups.keys()):
+        table = groups[name]
+        table.sort(key=lambda r: (-r["points"], -r["goal_difference"], -r["goals_for"], r["team_name"]))
+        for idx, row in enumerate(table, 1):
+            row["position"] = idx
+        result_groups.append({"name": name, "table": table})
+
+    return {"type": "tournament", "groups": result_groups}
+
+
+def _compute_league_standings(league_id: int, db: Session):
+    """Compute flat standings for a regular league."""
     teams = db.query(Team).filter(Team.league_id == league_id).all()
     if not teams:
         return []
@@ -1899,13 +2089,8 @@ def get_league_standings(league_id: int, db: Session = Depends(get_db)):
 
     stats = {
         team_id: {
-            "played": 0,
-            "won": 0,
-            "drawn": 0,
-            "lost": 0,
-            "goals_for": 0,
-            "goals_against": 0,
-            "form": []
+            "played": 0, "won": 0, "drawn": 0, "lost": 0,
+            "goals_for": 0, "goals_against": 0, "form": [],
         }
         for team_id in team_ids
     }
@@ -1917,7 +2102,7 @@ def get_league_standings(league_id: int, db: Session = Depends(get_db)):
             Match.away_team_id.in_(team_ids),
             Match.status == "FT",
             Match.home_score.isnot(None),
-            Match.away_score.isnot(None)
+            Match.away_score.isnot(None),
         )
         .order_by(Match.start_time.asc())
         .all()
@@ -1982,7 +2167,7 @@ def get_league_standings(league_id: int, db: Session = Depends(get_db)):
                 "goals_for": team_stats["goals_for"],
                 "goals_against": team_stats["goals_against"],
                 "goal_difference": goal_difference,
-                "form": "".join(team_stats["form"])
+                "form": "".join(team_stats["form"]),
             }
         )
 
@@ -1991,7 +2176,7 @@ def get_league_standings(league_id: int, db: Session = Depends(get_db)):
             -row["points"],
             -row["goal_difference"],
             -row["goals_for"],
-            row["team_name"]
+            row["team_name"],
         )
     )
 
@@ -1999,6 +2184,124 @@ def get_league_standings(league_id: int, db: Session = Depends(get_db)):
         row["rank"] = idx
 
     return standings
+
+
+@router.get("/league/{league_id}/bracket")
+def get_league_bracket(league_id: int, db: Session = Depends(get_db)):
+    """Return knockout bracket for a tournament league (e.g. World Cup)."""
+
+    ROUND_ORDER = [
+        ("LAST_32", "Round of 32"),
+        ("LAST_16", "Round of 16"),
+        ("QUARTER_FINALS", "Quarter-Finals"),
+        ("SEMI_FINALS", "Semi-Finals"),
+        ("THIRD_PLACE", "Third Place"),
+        ("FINAL", "Final"),
+    ]
+
+    knockout_matches = (
+        db.query(Match)
+        .filter(
+            Match.league_id == league_id,
+            Match.stage.isnot(None),
+            Match.stage != "GROUP_STAGE",
+        )
+        .order_by(Match.start_time.asc())
+        .all()
+    )
+
+    if not knockout_matches:
+        return {"rounds": []}
+
+    # Load teams for these matches
+    team_ids = set()
+    for m in knockout_matches:
+        if m.home_team_id:
+            team_ids.add(m.home_team_id)
+        if m.away_team_id:
+            team_ids.add(m.away_team_id)
+
+    teams_db = db.query(Team).filter(Team.id.in_(list(team_ids))).all() if team_ids else []
+    team_map = {t.id: t for t in teams_db}
+
+    def _team_obj(team_id):
+        if not team_id:
+            return None
+        t = team_map.get(team_id)
+        if not t:
+            return {"id": team_id, "name": "TBD", "logo": ""}
+        return {"id": t.id, "name": t.name, "logo": t.logo_url or ""}
+
+    # Group by stage
+    by_stage: dict = {}
+    for m in knockout_matches:
+        by_stage.setdefault(m.stage, []).append(m)
+
+    rounds = []
+    for stage_key, display_name in ROUND_ORDER:
+        matches_in_round = by_stage.get(stage_key, [])
+        if not matches_in_round:
+            continue
+        rounds.append({
+            "name": display_name,
+            "stage": stage_key,
+            "matches": [
+                {
+                    "id": m.id,
+                    "home_team": _team_obj(m.home_team_id),
+                    "away_team": _team_obj(m.away_team_id),
+                    "home_score": m.home_score,
+                    "away_score": m.away_score,
+                    "status": m.status,
+                    "start_time": m.start_time.isoformat() if m.start_time else None,
+                }
+                for m in matches_in_round
+            ],
+        })
+
+    return {"rounds": rounds}
+
+
+# Mapping from football-data.org league IDs to competition codes (for scorers API)
+_LEAGUE_ID_TO_FD_CODE = {
+    2021: "PL", 2014: "PD", 2002: "BL1", 2019: "SA", 2015: "FL1",
+    2001: "CL", 2000: "WC",
+}
+
+
+@router.get("/league/{league_id}/scorers")
+def get_league_scorers(league_id: int):
+    """Return top scorers for a competition via football-data.org."""
+    try:
+        from backend.services.football_data_org import fetch_competition_scorers
+    except ImportError:
+        from services.football_data_org import fetch_competition_scorers
+
+    code = _LEAGUE_ID_TO_FD_CODE.get(league_id)
+    if not code:
+        raise HTTPException(status_code=404, detail="Competition not supported for scorers")
+
+    raw = fetch_competition_scorers(code)
+    if not raw:
+        return []
+
+    scorers = []
+    for entry in raw:
+        player = entry.get("player", {})
+        team = entry.get("team", {})
+        scorers.append({
+            "player_name": player.get("name"),
+            "player_id": player.get("id"),
+            "team_name": team.get("name"),
+            "team_id": team.get("id"),
+            "team_logo": team.get("crest", ""),
+            "goals": entry.get("goals", 0),
+            "assists": entry.get("assists", 0),
+            "penalties": entry.get("penalties", 0),
+        })
+
+    return scorers
+
 
 @router.get("/teams")
 def get_teams(

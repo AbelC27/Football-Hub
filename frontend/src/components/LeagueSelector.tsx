@@ -1,6 +1,7 @@
 'use client';
 
 import React from 'react';
+import Link from 'next/link';
 import { League } from '@/lib/api';
 import { Trophy, ChevronRight } from 'lucide-react';
 
@@ -83,6 +84,16 @@ export const LeagueSelector: React.FC<LeagueSelectorProps> = ({
                                     <path d="M5 13l4 4L19 7"></path>
                                 </svg>
                             </div>
+                        )}
+
+                        {selectedLeague === league.id && (
+                            <Link
+                                href={`/league/${league.id}`}
+                                className="absolute bottom-2 right-3 text-xs text-white/70 hover:text-white underline"
+                                onClick={(e) => e.stopPropagation()}
+                            >
+                                View Standings →
+                            </Link>
                         )}
                     </button>
                 ))}
