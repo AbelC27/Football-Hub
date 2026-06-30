@@ -162,63 +162,122 @@ function BracketMatchCard({ match }: { match: BracketMatch }) {
     const homeWin = isFinished && match.home_score !== null && match.away_score !== null && match.home_score > match.away_score;
     const awayWin = isFinished && match.home_score !== null && match.away_score !== null && match.away_score > match.home_score;
 
-    const TeamRow = ({ team, score, isWinner }: { team: BracketTeam | null; score: number | null; isWinner: boolean }) => (
-        <div className={`flex items-center justify-between px-3 py-2 ${isWinner ? 'bg-green-900/30 border-l-2 border-green-500' : 'border-l-2 border-transparent'}`}>
+    const TeamRow = ({ team, score, isWinner, dim }: { team: BracketTeam | null; score: number | null; isWinner: boolean; dim: boolean }) => (
+        <div className={`flex items-center justify-between px-2.5 py-1.5 ${isWinner ? 'bg-green-900/20' : ''}`}>
             <div className="flex items-center gap-2 min-w-0">
-                {team?.logo && <img src={team.logo} alt="" className="w-5 h-5 flex-shrink-0 object-contain" />}
-                <span className={`text-sm truncate ${isWinner ? 'font-bold text-white' : 'text-neutral-300'} ${!team ? 'text-neutral-600 italic' : ''}`}>
+                {team?.logo
+                    ? <img src={team.logo} alt="" className="w-4 h-4 flex-shrink-0 object-contain" />
+                    : <div className="w-4 h-4 flex-shrink-0 rounded-sm bg-neutral-800" />}
+                <span className={`text-[13px] truncate ${isWinner ? 'font-bold text-white' : dim ? 'text-neutral-500' : 'text-neutral-300'} ${!team ? 'text-neutral-600 italic' : ''}`}>
                     {team?.name || 'TBD'}
                 </span>
             </div>
-            <span className={`text-sm font-mono ml-3 ${isWinner ? 'font-bold text-green-400' : 'text-neutral-400'}`}>
-                {score !== null ? score : '-'}
+            <span className={`text-[13px] font-mono ml-2 tabular-nums ${isWinner ? 'font-bold text-white' : 'text-neutral-400'}`}>
+                {score !== null ? score : ''}
             </span>
         </div>
     );
 
     return (
-        <Link href={match.id ? `/match/${match.id}` : '#'} className="block">
-            <div className={`border border-neutral-700 rounded-lg bg-neutral-900/80 hover:border-blue-500/50 hover:bg-neutral-800/80 transition-all w-52 ${isLive ? 'ring-1 ring-red-500/50' : ''}`}>
-                {isLive && (
-                    <div className="text-[10px] text-red-400 font-bold text-center py-0.5 bg-red-900/20 rounded-t-lg">● LIVE</div>
-                )}
-                <TeamRow team={match.home_team} score={match.home_score} isWinner={homeWin} />
-                <div className="border-t border-neutral-800/50" />
-                <TeamRow team={match.away_team} score={match.away_score} isWinner={awayWin} />
-                {match.start_time && !isFinished && !isLive && (
-                    <div className="text-[10px] text-neutral-500 text-center py-1 border-t border-neutral-800/50">
-                        {new Date(match.start_time).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
-                    </div>
-                )}
-                {isFinished && match.status !== 'FT' && (
-                    <div className="text-[10px] text-amber-500 text-center py-0.5 border-t border-neutral-800/50">
-                        {match.status === 'AET' ? 'After Extra Time' : 'Penalties'}
-                    </div>
-                )}
+        <Link href={match.id ? `/match/${match.id}` : '#'} className="block group">
+            <div className={`rounded-md bg-neutral-900 border border-neutral-800 overflow-hidden w-[210px] shadow-sm group-hover:border-blue-500/60 transition-colors ${isLive ? 'ring-1 ring-red-500/60' : ''}`}>
+                <TeamRow team={match.home_team} score={match.home_score} isWinner={homeWin} dim={awayWin} />
+                <div className="border-t border-neutral-800" />
+                <TeamRow team={match.away_team} score={match.away_score} isWinner={awayWin} dim={homeWin} />
+            </div>
+            <div className="mt-1 px-1 flex items-center justify-between">
+                {isLive ? (
+                    <span className="text-[10px] text-red-400 font-bold">● LIVE</span>
+                ) : isFinished && match.status !== 'FT' ? (
+                    <span className="text-[10px] text-amber-500">{match.status === 'AET' ? 'a.e.t.' : 'pens'}</span>
+                ) : match.start_time && !isFinished ? (
+                    <span className="text-[10px] text-neutral-600">
+                        {new Date(match.start_time).toLocaleDateString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                    </span>
+                ) : <span />}
             </div>
         </Link>
+    );
+}
+
+// One match cell with optional connector lines (Flashscore style).
+function BracketCell({
+    match, matchIdx, hasPrev, hasNext,
+}: { match: BracketMatch; matchIdx: number; hasPrev: boolean; hasNext: boolean }) {
+    const isTop = matchIdx % 2 === 0;
+    return (
+        <div className="flex-1 flex items-center min-h-[64px]">
+            {/* Incoming line from previous round */}
+            {hasPrev && <div className="w-5 border-t border-neutral-700 flex-shrink-0" />}
+
+            <BracketMatchCard match={match} />
+
+            {/* Outgoing elbow toward next round */}
+            {hasNext && (
+                <div className="w-5 self-stretch relative flex-shrink-0">
+                    {/* horizontal stub out of the card, at vertical center */}
+                    <div className="absolute top-1/2 left-0 right-0 border-t border-neutral-700" />
+                    {/* vertical line: top match goes down, bottom match goes up, meeting at the column edge */}
+                    <div
+                        className={`absolute right-0 border-r border-neutral-700 ${isTop ? 'top-1/2 bottom-0' : 'top-0 bottom-1/2'}`}
+                    />
+                </div>
+            )}
+        </div>
     );
 }
 
 function KnockoutBracket({ bracket }: { bracket: BracketData }) {
     if (!bracket.rounds.length) return null;
 
+    // Third-place playoff is rendered separately so it doesn't break the
+    // halving structure of the main knockout tree.
+    const mainRounds = bracket.rounds.filter((r) => r.stage !== 'THIRD_PLACE');
+    const thirdPlace = bracket.rounds.find((r) => r.stage === 'THIRD_PLACE');
+
     return (
-        <div className="overflow-x-auto">
-            <div className="flex gap-8 min-w-max py-4">
-                {bracket.rounds.map((round) => (
-                    <div key={round.stage} className="flex flex-col gap-3">
-                        <h3 className="text-xs font-semibold text-neutral-400 text-center uppercase tracking-wide">
-                            {round.name}
-                        </h3>
-                        <div className="flex flex-col gap-2 justify-center flex-1">
-                            {round.matches.map((m) => (
-                                <BracketMatchCard key={m.id} match={m} />
-                            ))}
-                        </div>
-                    </div>
-                ))}
+        <div className="space-y-8">
+            <div className="overflow-x-auto pb-2">
+                <div className="flex min-w-max">
+                    {mainRounds.map((round, roundIdx) => {
+                        const hasPrev = roundIdx > 0;
+                        const hasNext = roundIdx < mainRounds.length - 1;
+                        const isFinalRound = round.stage === 'FINAL';
+                        return (
+                            <div key={round.stage} className="flex flex-col">
+                                <h3 className={`text-[11px] font-bold uppercase tracking-wider text-center mb-3 ${isFinalRound ? 'text-amber-400' : 'text-neutral-500'}`}>
+                                    {isFinalRound && '🏆 '}{round.name}
+                                </h3>
+                                <div className="flex flex-col flex-1 justify-around">
+                                    {round.matches.map((m, i) => (
+                                        <BracketCell
+                                            key={m.id}
+                                            match={m}
+                                            matchIdx={i}
+                                            hasPrev={hasPrev}
+                                            hasNext={hasNext}
+                                        />
+                                    ))}
+                                </div>
+                            </div>
+                        );
+                    })}
+                </div>
             </div>
+
+            {/* Third-place playoff */}
+            {thirdPlace && thirdPlace.matches.length > 0 && (
+                <div className="border-t border-neutral-800 pt-6">
+                    <h3 className="text-[11px] font-bold uppercase tracking-wider text-neutral-500 mb-3">
+                        🥉 {thirdPlace.name}
+                    </h3>
+                    <div className="flex">
+                        {thirdPlace.matches.map((m) => (
+                            <BracketMatchCard key={m.id} match={m} />
+                        ))}
+                    </div>
+                </div>
+            )}
         </div>
     );
 }
